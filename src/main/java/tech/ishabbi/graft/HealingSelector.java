@@ -58,9 +58,17 @@ public final class HealingSelector implements LocatorSpec {
 
     public HealingSelector timeout(Duration d) { return new HealingSelector(primary, description, heal, d.toMillis(), origin, within); }
 
-    /** Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}. */
+    /**
+     * Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}.
+     * Needs a primary locator: a description-only selector is found by Alumnium wherever it is.
+     */
     public HealingSelector within(String... hops) {
-        return new HealingSelector(primary, description, heal, timeoutMs, origin, Within.parseAll(hops));
+        List<Within.Hop> parsed = Within.parseAll(hops);
+        if (!parsed.isEmpty() && primary == null) {
+            throw new IllegalArgumentException(displayName() + ": within requires a primary locator; "
+                    + "a description-only selector has nothing to resolve in the context");
+        }
+        return new HealingSelector(primary, description, heal, timeoutMs, origin, parsed);
     }
 
     public List<Within.Hop> within() { return within; }

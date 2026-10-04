@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
+import tech.ishabbi.graft.Within;
 
 /**
  * Runs the shared anchored-locator script in headless Chromium through
@@ -312,6 +313,20 @@ class AnchoredSuggestionTest {
                 + shadow("document.getElementById('card')", "open", "<input name=\"cc\" data-graft-probe=\"t\">"));
         Object result = page.locator(TARGET).evaluate(AnchoredLocatorScript.source(), SELENIUM_OPTS);
         assertSuggestion(AnchoredLocatorScript.toSuggestion(result), "name", "cc", List.of("shadow=#card"));
+    }
+
+    @Test
+    void hostLightDomCountsTowardsShadowUniqueness() {
+        // The host's slotted light child has the same text as the shadow target. A shadow= hop replays
+        // as host.locator(...), which also sees light descendants, so the text tier must not apply.
+        page.setContent("<x-box id='box'><button>Go</button></x-box>"
+                + shadow("document.getElementById('box')", "open",
+                        "<slot></slot><div><button data-graft-probe=\"t\">Go</button></div>"));
+        LocatorSuggestion s = PlaywrightSuggestedLocator.suggest(page.locator(TARGET));
+        assertSuggestion(s, "css", "div > button", List.of("shadow=#box"));
+        Locator replay = PlaywrightScope.enter(page, Within.parseAll(s.within())).find(s.kind(), s.value());
+        assertEquals(1, replay.count(), "replay of " + s);
+        assertEquals("t", replay.getAttribute("data-graft-probe"), "replay of " + s);
     }
 
     @Test

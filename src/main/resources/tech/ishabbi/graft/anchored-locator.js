@@ -6,7 +6,9 @@
   // structural path from the root (:root / shadow top-level child), else null.
   // opts.cssOnlyInShadow: skip the text tier inside shadow roots (Selenium's text locator is XPath).
   // opts.pierce: count uniqueness matches in the root plus every OPEN shadow root nested below it,
-  //   for engines whose replay pierces shadow DOM (Playwright: true; Selenium: false).
+  //   for engines whose replay pierces shadow DOM (Playwright: true; Selenium: false). For a shadow
+  //   root, the host's light-DOM descendants (and their open roots) count too: a shadow= hop
+  //   replays as host.locator(css), which matches light descendants as well as the shadow tree.
   // opts.cssOnly: the element's own locator is always kind 'css' (testId / id / name become
   //   attribute or #id CSS, escaped here with CSS.escape; no text tier). Used for an iframe
   //   element, whose frame= hop must be CSS.
@@ -35,7 +37,8 @@
     return v && v.trim() && !NOISY.test(v) ? v : null;
   };
 
-  // The roots a uniqueness check searches: `root`, plus (with pierce) its nested open shadow roots.
+  // The nodes a uniqueness check queries: `root`; with pierce, also its nested open shadow roots and,
+  // for a shadow root, its host (host.querySelectorAll covers the light descendants) with theirs.
   const scopeCache = new Map();
   const scopesOf = (root) => {
     if (!pierce) return [root];
@@ -45,6 +48,7 @@
       scopes.push(r);
       for (const n of r.querySelectorAll('*')) if (n.shadowRoot) collect(n.shadowRoot); // open roots only
     };
+    if (isShadowRoot(root)) collect(root.host); // the host's light DOM, not the host itself
     collect(root);
     scopeCache.set(root, scopes);
     return scopes;

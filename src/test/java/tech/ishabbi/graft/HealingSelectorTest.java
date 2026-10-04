@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HealingSelectorTest {
 
@@ -33,6 +34,16 @@ class HealingSelectorTest {
         plain.within("frame=#x");
         assertEquals(List.of(), plain.within());
         assertThrows(IllegalArgumentException.class, () -> base().within("nope"));
+    }
+
+    @Test
+    void descriptionOnlyRejectsWithin() {
+        HealingSelector described = HealingSelector.describe("the pay button");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> described.within("frame=#checkout"));
+        assertTrue(e.getMessage().contains("the pay button"), e.getMessage());
+        assertTrue(e.getMessage().contains("within"), e.getMessage());
+        assertEquals(List.of(), described.within(new String[0]).within(), "an empty within stays allowed");
     }
 
     @Test
