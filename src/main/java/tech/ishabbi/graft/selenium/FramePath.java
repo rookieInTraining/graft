@@ -1,7 +1,7 @@
 package tech.ishabbi.graft.selenium;
 
-import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
+import tech.ishabbi.graft.internal.AnchoredLocatorScript;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;

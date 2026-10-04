@@ -1,7 +1,7 @@
 package tech.ishabbi.graft.playwright;
 
-import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
+import tech.ishabbi.graft.internal.AnchoredLocatorScript;
 import com.microsoft.playwright.ElementHandle;
 import com.microsoft.playwright.Frame;
 import com.microsoft.playwright.Locator;

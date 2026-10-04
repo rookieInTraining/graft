@@ -1,4 +1,4 @@
-package tech.ishabbi.graft;
+package tech.ishabbi.graft.internal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import tech.ishabbi.graft.LocatorSuggestion;
 
 class AnchoredLocatorScriptTest {
 

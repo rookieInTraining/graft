@@ -20,9 +20,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
-import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
 import tech.ishabbi.graft.Within;
+import tech.ishabbi.graft.internal.AnchoredLocatorScript;
 
 /**
  * Runs the shared anchored-locator script in headless Chromium through

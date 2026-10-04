@@ -1,9 +1,9 @@
 package tech.ishabbi.graft.selenium;
 
-import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.HealReport;
 import tech.ishabbi.graft.HealingConfig;
 import tech.ishabbi.graft.HealingException;
+import tech.ishabbi.graft.internal.AnchoredLocatorScript;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
