@@ -39,7 +39,9 @@ Design rules:
 1. **Locator first, always.** The declared locator gets a fair chance (`locatorTimeout`,
    default 5 s). Healing is for broken selectors, not for timing. Never heal on success.
 2. **The proxy is the real thing.** Fields are JDK proxies implementing `WebElement`/`Locator`,
-   so Playwright assertions, Selenium `Actions`, waits, and `WrapsElement` all work.
+   so Playwright assertions work, and so do Selenium `Actions`, waits and `WrapsElement` for elements
+   in the test's current document. For an element inside an iframe, a Selenium proxy switches into
+   the frame only for its own method calls (see Limitations).
 3. **Heals are bounded and visible.** A per-element budget caps LLM spend; every heal is
    logged, fanned out to listeners, and written to `.graft/heal-report.json` with a
    `suggestedLocator` you can paste back into the page object.
@@ -87,7 +89,8 @@ removed when that learned locator stops matching.
 A learned locator keeps the context it was found in. When the element sits in an iframe or an open
 shadow root, the entry carries the `within` hops (see below) and replay re-enters them, so a heal
 learned inside a same- or cross-origin iframe replays there. Entries without `within` behave as
-before.
+before. A row this version cannot read (for example an unknown hop type) is skipped with a WARNING;
+the file store writes it back unchanged, and Redis and HTTP stores treat it as a miss.
 
 **Rollout:** upgrade `CacheServer` before the test clients. An old server drops `within` on `PUT`,
 and an old client replays a `within` entry in the current context, where it either misses (the entry
@@ -211,11 +214,21 @@ Per-element overrides: `heal = false` (fail fast), `timeoutMs = 500` (shorter/lo
 
 #### Locators inside iframes and shadow roots (`within`)
 
+Selenium / Appium (web):
+
 ```java
 @Element(value = "the card number field", within = {"frame=#checkout", "shadow=pay-widget"}, css = "input.card")
 WebElement cardNumber;
 
 static final By PAY = HealingBy.of(By.cssSelector("button.pay"), "the Pay button").within("frame=#checkout").proxied();
+```
+
+Playwright:
+
+```java
+@Element(value = "the card number field", within = {"frame=#checkout", "shadow=pay-widget"}, css = "input.card")
+Locator cardNumber;
+
 static final HealingSelector CARD = HealingSelector.of("input.card", "the card number").within("frame=#checkout");
 ```
 
@@ -235,7 +248,9 @@ Restrictions, all rejected with `IllegalArgumentException`:
   and so is `within` with no locator.
 - A description-only `HealingSelector` with `within` is rejected: Alumnium finds it wherever it is.
 - Selenium supports only CSS inside a shadow root. When the chain ends in a shadow hop, `xpath` and
-  `text` locators are rejected. Playwright rejects `xpath` after any shadow hop.
+  `text` locators are rejected; use `css`, `id`, `name` or `testId` (they map to CSS there).
+  Selenium's own `By.linkText` / `By.partialLinkText` do not work inside shadow roots either.
+  Playwright rejects `xpath` after any shadow hop.
 
 ## Heal policy (`HealingConfig`)
 
@@ -376,6 +391,14 @@ For Maestro: Maestro CLI on `PATH` (or `MAESTRO_BINARY`), Alumnium binary on `PA
   restores the test's frame afterwards. Children found through such a proxy
   (`proxy.findElement/findElements`) are frame-aware proxies too, not raw driver elements, so
   identity and `equals` against raw elements do not hold.
+- A Selenium proxy of iframe content switches into the frame only for its own method calls. Anything
+  that unwraps it (`Actions`, `JavascriptExecutor.executeScript(..., proxy)`, `WrapsElement`) gets the
+  raw in-frame element while the driver is back in the test's frame. For such calls, switch into the
+  frame yourself (`driver.switchTo().frame(...)`), or use a raw `HealingBy`, which stays in the frame.
+  `getShadowRoot()` on such a proxy likewise returns a raw `ShadowRoot`, usable only while switched
+  into that frame.
+- Behaviour change: proxies (`@Element`, `HealingBy.proxied()`) now restore the test's frame after a
+  heal. Previously the driver stayed in the frame Alumnium switched into for the healed element.
 - Selenium finds a frame by walking the frame tree: at most 6 levels deep and 64 frames. If Graft
   cannot work out the iframe path of an element Alumnium healed (frame unreachable or caps
   exceeded), no frame hops are learned and the driver is left in the frame Alumnium switched to.
