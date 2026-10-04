@@ -1,0 +1,58 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'tech.ishabbi'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Alumnium pulls selenium-java and appium java-client transitively. The three
+// automation frameworks are declared compileOnly so this module never forces
+// a framework (or a framework version) on a project that only uses one of them.
+// Align the versions below with what your project already resolves.
+def alumniumVersion = '0.23.0'
+
+dependencies {
+    api "ai.alumnium:alumnium:${alumniumVersion}"
+    // Bundled server/MCP binary for the platform the tests run on. Add the
+    // other platforms you need (darwin-x64, linux-x64, win32-x64, ...).
+    runtimeOnly "ai.alumnium:alumnium-cli-darwin-arm64:${alumniumVersion}"
+
+    implementation 'com.google.code.gson:gson:2.11.0'
+
+    compileOnly 'org.seleniumhq.selenium:selenium-java:4.27.0'
+    compileOnly 'io.appium:java-client:9.4.0'
+    compileOnly 'com.microsoft.playwright:playwright:1.49.0'
+    compileOnly 'redis.clients:jedis:5.2.0'
+
+    testImplementation platform('org.junit:junit-bom:5.11.3')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.seleniumhq.selenium:selenium-java:4.27.0'
+    testImplementation 'io.appium:java-client:9.4.0'
+    testImplementation 'com.microsoft.playwright:playwright:1.49.0'
+    testImplementation 'redis.clients:jedis:5.2.0'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+        }
+    }
+}
