@@ -162,8 +162,8 @@ public final class SeleniumHealer extends AbstractHealer {
      * the caller enters {@link Located#frames()} itself for the actual call ({@link #enter}).
      *
      * <p>With {@code stay}, a cached element whose frames cannot be entered any more (the iframe was
-     * removed, replaced, or is not back yet) counts as stale: the entry is dropped, the test's frame
-     * restored, and the element resolved again as if uncached.
+     * removed, or is not back yet) counts as stale: the entry is dropped, the test's frame restored,
+     * and the element resolved again as if uncached.
      */
     Located resolve(LocatorSpec spec, By primary, SearchContext context, boolean stay) {
         Located cached = healed.get(spec.key());
@@ -295,8 +295,8 @@ public final class SeleniumHealer extends AbstractHealer {
     }
 
     /**
-     * A proxy could not enter the frames of its cached element: the iframe was removed, replaced,
-     * or is not back yet. Treated as stale, but through the normal path with the normal timeout, so
+     * A proxy could not enter the frames of its cached element: the iframe was removed, or is not
+     * back yet. Treated as stale, but through the normal path with the normal timeout, so
      * a late iframe is waited for. As in {@link #reResolveAfterStale}, the driver is left in the
      * fresh element's frame and the proxy restores {@code outer}.
      */
