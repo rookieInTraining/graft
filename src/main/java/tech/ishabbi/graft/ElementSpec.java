@@ -109,7 +109,7 @@ public final class ElementSpec implements LocatorSpec {
     public String locatorValue() { return locatorValue; }
 
     /** Context chain (iframes / shadow roots) the locator is resolved in, outside-in; empty for top level. */
-    public List<Within.Hop> within() { return within; }
+    @Override public List<Within.Hop> within() { return within; }
 
     public boolean hasInlineLocator() { return locatorKind != null; }
 

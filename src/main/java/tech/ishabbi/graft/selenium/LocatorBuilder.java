@@ -42,18 +42,23 @@ final class LocatorBuilder {
         return null;
     }
 
-    /** Turns a learned {@link LocatorSuggestion} back into a {@link By}; {@code null} if it does not apply here. */
-    static By fromSuggestion(LocatorSuggestion s, WebDriver driver, Framework framework) {
+    /**
+     * Turns a learned {@link LocatorSuggestion} back into a {@link By}; {@code null} if it does not
+     * apply here. With {@code cssOnly} (the search runs in a shadow root, where Selenium supports only
+     * CSS) id / name / testId become attribute CSS and xpath / text give {@code null}.
+     */
+    static By fromSuggestion(LocatorSuggestion s, WebDriver driver, Framework framework, boolean cssOnly) {
         if (s == null) return null;
         try {
             switch (s.kind()) {
-                case "id":              return fromKind(LocatorKind.ID, s.value(), driver, framework);
-                case "css":             return fromKind(LocatorKind.CSS, s.value(), driver, framework);
-                case "xpath":           return fromKind(LocatorKind.XPATH, s.value(), driver, framework);
-                case "name":            return fromKind(LocatorKind.NAME, s.value(), driver, framework);
-                case "text":            return fromKind(LocatorKind.TEXT, s.value(), driver, framework);
-                case "testId":          return fromKind(LocatorKind.TEST_ID, s.value(), driver, framework);
-                case "accessibilityId": return AppiumSupport.available() ? AppiumSupport.accessibilityId(s.value()) : null;
+                case "id":              return fromKind(LocatorKind.ID, s.value(), driver, framework, cssOnly);
+                case "css":             return fromKind(LocatorKind.CSS, s.value(), driver, framework, cssOnly);
+                case "xpath":           return fromKind(LocatorKind.XPATH, s.value(), driver, framework, cssOnly);
+                case "name":            return fromKind(LocatorKind.NAME, s.value(), driver, framework, cssOnly);
+                case "text":            return fromKind(LocatorKind.TEXT, s.value(), driver, framework, cssOnly);
+                case "testId":          return fromKind(LocatorKind.TEST_ID, s.value(), driver, framework, cssOnly);
+                case "accessibilityId":
+                    return !cssOnly && AppiumSupport.available() ? AppiumSupport.accessibilityId(s.value()) : null;
                 default:                return null;
             }
         } catch (RuntimeException e) {
@@ -61,15 +66,38 @@ final class LocatorBuilder {
         }
     }
 
+    /** Why an xpath / text locator is refused in a shadow root. */
+    static final String SHADOW_CSS_ONLY = "xpath/text locators can't be used inside a shadow root in Selenium"
+            + " (it supports only CSS there); use css, id, name or testId";
+
     private static By fromInline(ElementSpec spec, WebDriver driver, Framework framework) {
-        return fromKind(spec.locatorKind().orElseThrow(), spec.locatorValue(), driver, framework, spec);
+        boolean cssOnly = ContextResolver.endsInShadow(spec.within());
+        return fromKind(spec.locatorKind().orElseThrow(), spec.locatorValue(), driver, framework, cssOnly, spec);
     }
 
-    private static By fromKind(LocatorKind kind, String v, WebDriver driver, Framework framework) {
-        return fromKind(kind, v, driver, framework, null);
+    private static By fromKind(LocatorKind kind, String v, WebDriver driver, Framework framework, boolean cssOnly) {
+        return fromKind(kind, v, driver, framework, cssOnly, null);
     }
 
-    private static By fromKind(LocatorKind kind, String v, WebDriver driver, Framework framework, ElementSpec spec) {
+    /** {@code spec} is set for inline locators: an unusable kind then throws instead of giving {@code null}. */
+    private static By fromKind(LocatorKind kind, String v, WebDriver driver, Framework framework,
+                               boolean cssOnly, ElementSpec spec) {
+        if (cssOnly) {
+            switch (kind) {
+                case ID:      return By.cssSelector("[id=" + cssLiteral(v) + "]");
+                case NAME:    return By.cssSelector("[name=" + cssLiteral(v) + "]");
+                case TEST_ID: return By.cssSelector("[data-testid=" + cssLiteral(v) + "]");
+                case CSS:
+                case SELECTOR:
+                    return By.cssSelector(v);
+                case XPATH:
+                case TEXT:
+                    if (spec == null) return null;
+                    throw new IllegalArgumentException("@Element on " + spec.displayName() + ": " + SHADOW_CSS_ONLY);
+                default:
+                    break;   // Appium kinds: unchanged below
+            }
+        }
         boolean mobile = framework == Framework.APPIUM;
         switch (kind) {
             case ID:
@@ -82,9 +110,11 @@ final class LocatorBuilder {
             case NAME:
                 return By.name(v);
             case TEXT:
-                // Works on web (text()), Android (@text) and iOS (@label/@name).
+                // Works on web (any own text node), Android (@text) and iOS (@label/@name). Not
+                // normalize-space(text()): that reads only the first text node, which may be
+                // whitespace before a child element (<button>\n <i></i> Save</button>).
                 return By.xpath("//*[@text=" + xpathLiteral(v) + " or @label=" + xpathLiteral(v)
-                        + " or @name=" + xpathLiteral(v) + " or normalize-space(text())=" + xpathLiteral(v) + "]");
+                        + " or @name=" + xpathLiteral(v) + " or text()[normalize-space()=" + xpathLiteral(v) + "]]");
             case TEST_ID:
                 if (mobile && AppiumSupport.available()) {
                     return AppiumSupport.isAndroid(driver) ? AppiumSupport.id(v) : AppiumSupport.accessibilityId(v);

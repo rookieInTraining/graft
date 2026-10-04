@@ -1,6 +1,7 @@
 package tech.ishabbi.graft;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * What every healable locator looks like to the heal policy, regardless of how it was declared:
@@ -25,4 +26,7 @@ public interface LocatorSpec {
 
     /** Where to edit: {@code com.acme.LoginPage#signIn} or {@code LoginPage.java:42}. */
     String origin();
+
+    /** Context chain (iframes / shadow roots) the primary locator is resolved in, outside-in; empty for top level. */
+    default List<Within.Hop> within() { return List.of(); }
 }

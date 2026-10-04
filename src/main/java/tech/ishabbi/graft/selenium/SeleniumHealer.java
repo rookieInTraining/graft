@@ -10,6 +10,7 @@ import tech.ishabbi.graft.HealingException;
 import tech.ishabbi.graft.HealingSelector;
 import tech.ishabbi.graft.LocatorSpec;
 import tech.ishabbi.graft.LocatorSuggestion;
+import tech.ishabbi.graft.Within;
 import tech.ishabbi.graft.internal.AlumniHolder;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Capabilities;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * Healer for Selenium and Appium — local drivers and Selenium Grid alike.
@@ -50,8 +52,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ul>
  *
  * <p>Resolution for every access: cached healed element → primary locator polled for the timeout →
- * learned locator → Alumnium. Heals are scoped: when the search context is an element, the healed
- * element must be inside it.
+ * learned locator → Alumnium. Heals are scoped: when the search context is an element or a shadow
+ * root, the healed element must be inside it.
  */
 public final class SeleniumHealer extends AbstractHealer {
 
@@ -154,10 +156,20 @@ public final class SeleniumHealer extends AbstractHealer {
             return cacheHealed(spec, findByDescription(spec, context));
         }
         try {
-            return waitFor(context, primary, spec.locatorTimeout(config()));
+            return waitFor(scopeOf(spec, context), primary, spec.locatorTimeout(config()));
         } catch (NoSuchElementException | InvalidSelectorException primaryFailure) {
             return cacheHealed(spec, healWithAlumnium(spec, primary, context, primaryFailure));
         }
+    }
+
+    /**
+     * Where the primary is searched: {@code context} itself for an empty {@code within}, else the
+     * context entered through the chain, re-entered on every poll so a late host or iframe is found.
+     */
+    private Supplier<SearchContext> scopeOf(LocatorSpec spec, SearchContext context) {
+        List<Within.Hop> within = spec.within();
+        if (within.isEmpty()) return () -> context;
+        return () -> ContextResolver.enter(driver, context, within).context();
     }
 
     /** A healed (cached) element went stale: quick retry of the primary, then Alumnium again. */
@@ -167,7 +179,7 @@ public final class SeleniumHealer extends AbstractHealer {
             return cacheHealed(spec, findByDescription(spec, context));
         }
         try {
-            return waitFor(context, primary, config().pollInterval());
+            return waitFor(scopeOf(spec, context), primary, config().pollInterval());
         } catch (NoSuchElementException | InvalidSelectorException ignored) {
             return cacheHealed(spec, healWithAlumnium(spec, primary, context, stale));
         }
@@ -195,14 +207,14 @@ public final class SeleniumHealer extends AbstractHealer {
     private WebElement healWithAlumnium(LocatorSpec spec, By primary, SearchContext context, Throwable cause) {
         try {
             return heal(spec, primary.toString(), cause,
-                    suggestion -> tryLearned(suggestion, context),
+                    suggestion -> tryLearned(spec, suggestion, context),
                     () -> {
                         WebElement el = findWithAlumnium(spec);
                         requireInScope(spec, el, context, cause);
                         return el;
                     },
                     SuggestedLocator::describe,
-                    found -> SuggestedLocator.suggest(found, framework));
+                    found -> SuggestedLocator.suggest(driver, found, framework));
         } catch (HealingException e) {
             for (Throwable t : e.getSuppressed()) {
                 if (t instanceof OutOfScopeException scope) throw scope;   // keep Selenium's exception type
@@ -223,34 +235,53 @@ public final class SeleniumHealer extends AbstractHealer {
                 + " for a " + framework + " driver; expected WebElement");
     }
 
-    /** One quick attempt with a locator remembered from an earlier heal; {@code null} on miss. */
-    private WebElement tryLearned(LocatorSuggestion suggestion, SearchContext context) {
-        By by = LocatorBuilder.fromSuggestion(suggestion, driver, framework);
-        if (by == null) return null;
+    /**
+     * One quick attempt with a locator remembered from an earlier heal; {@code null} on miss. The
+     * suggestion's {@code within} is entered first (failing to enter is a miss); inside a shadow
+     * root the locator must map to CSS.
+     */
+    private WebElement tryLearned(LocatorSpec spec, LocatorSuggestion suggestion, SearchContext context) {
+        ContextResolver.Scope scope;
         try {
-            return waitFor(context, by, config().pollInterval());
+            scope = ContextResolver.enter(driver, context, Within.parseAll(suggestion.within()));
+        } catch (RuntimeException miss) {
+            log.log(System.Logger.Level.DEBUG, "{0}: cannot enter the learned locator''s context {1}: {2}",
+                    spec.displayName(), suggestion.within(), miss.getMessage());
+            return null;
+        }
+        By by = LocatorBuilder.fromSuggestion(suggestion, driver, framework, scope.inShadow());
+        if (by == null) {
+            if (scope.inShadow()) {
+                log.log(System.Logger.Level.DEBUG, "{0}: learned locator {1} is unsupported in a shadow root "
+                        + "(Selenium supports only CSS there); treating it as a miss", spec.displayName(), suggestion);
+            }
+            return null;
+        }
+        try {
+            return waitFor(scope::context, by, config().pollInterval());
         } catch (NoSuchElementException | InvalidSelectorException miss) {
             return null;
         }
     }
 
     /**
-     * A heal must respect the search context: if the lookup was {@code parent.findElement(by)}, the
-     * element Alumnium found has to be inside {@code parent}. Web: DOM containment via JS; native
-     * mobile: the child's centre must lie within the parent's rect. If the check itself cannot run,
-     * the heal is allowed and the uncertainty is logged.
+     * A heal must respect the search context: if the lookup was {@code parent.findElement(by)} (an
+     * element or a shadow root), the element Alumnium found has to be inside {@code parent}. Web: DOM
+     * containment via JS, composed through shadow hosts; native mobile: the child's centre must lie
+     * within the parent's rect. If the check itself cannot run, the heal is allowed and the
+     * uncertainty is logged.
      */
     private void requireInScope(LocatorSpec spec, WebElement el, SearchContext context, Throwable cause) {
-        if (!(context instanceof WebElement parent) || parent == el) return;
-        Boolean inside = contains(parent, el);
+        if (context instanceof WebDriver || context == null || context == el) return;
+        Boolean inside = contains(context, el);
         if (inside == null) {
             log.log(System.Logger.Level.DEBUG, "Could not verify that the healed {0} lies within {1}; allowing",
-                    spec.displayName(), parent);
+                    spec.displayName(), context);
             return;
         }
         if (!inside) {
             OutOfScopeException nse = new OutOfScopeException("Alumnium found \"" + spec.description()
-                    + "\" but it is outside the search context " + parent + "; refusing to heal out of scope");
+                    + "\" but it is outside the search context " + context + "; refusing to heal out of scope");
             if (cause != null) nse.initCause(cause);
             throw nse;
         }
@@ -261,9 +292,18 @@ public final class SeleniumHealer extends AbstractHealer {
         OutOfScopeException(String message) { super(message); }
     }
 
-    private Boolean contains(WebElement parent, WebElement child) {
+    /**
+     * {@code arguments[0]} (an element or a shadow root) contains {@code arguments[1]}, also when the
+     * child sits in shadow roots nested below it: climb from the child through shadow hosts.
+     */
+    private static final String CONTAINS_JS = "const parent = arguments[0]; let n = arguments[1];"
+            + " while (n) { if (parent.contains(n)) return true;"
+            + " const r = n.getRootNode(); n = r && r.host ? r.host : null; }"
+            + " return false;";
+
+    private Boolean contains(SearchContext context, WebElement child) {
         try {
-            if (framework == Framework.APPIUM) {
+            if (framework == Framework.APPIUM && context instanceof WebElement parent) {
                 Rectangle p = parent.getRect();
                 Rectangle c = child.getRect();
                 int cx = c.getX() + c.getWidth() / 2;
@@ -273,7 +313,8 @@ public final class SeleniumHealer extends AbstractHealer {
             }
             WebDriver d = DriverRegistry.unwrapDriver(driver);
             if (d instanceof JavascriptExecutor js) {
-                Object r = js.executeScript("return arguments[0].contains(arguments[1]);", unwrap(parent), unwrap(child));
+                Object parent = context instanceof WebElement el ? unwrap(el) : context;   // ShadowRoot as-is
+                Object r = js.executeScript(CONTAINS_JS, parent, unwrap(child));
                 return r instanceof Boolean b ? b : null;
             }
         } catch (RuntimeException e) {
@@ -282,7 +323,7 @@ public final class SeleniumHealer extends AbstractHealer {
         return null;
     }
 
-    private static WebElement unwrap(WebElement el) {
+    static WebElement unwrap(WebElement el) {
         WebElement current = el;
         for (int i = 0; i < 8 && current instanceof WrapsElement we; i++) {
             WebElement inner = we.getWrappedElement();
@@ -297,12 +338,12 @@ public final class SeleniumHealer extends AbstractHealer {
      * {@code WebDriverWait}: the raw {@link NoSuchElementException} (with its selector text) is the
      * heal cause. An implicit wait on the driver adds to each poll.
      */
-    private WebElement waitFor(SearchContext context, By by, Duration timeout) {
+    private WebElement waitFor(Supplier<SearchContext> scope, By by, Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
         NoSuchElementException last;
         while (true) {
             try {
-                return context.findElement(by);
+                return scope.get().findElement(by);
             } catch (NoSuchElementException e) {
                 last = e;
             }

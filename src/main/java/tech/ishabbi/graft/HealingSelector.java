@@ -71,7 +71,7 @@ public final class HealingSelector implements LocatorSpec {
         return new HealingSelector(primary, description, heal, timeoutMs, origin, parsed);
     }
 
-    public List<Within.Hop> within() { return within; }
+    @Override public List<Within.Hop> within() { return within; }
 
     public Object primary() { return primary; }
 

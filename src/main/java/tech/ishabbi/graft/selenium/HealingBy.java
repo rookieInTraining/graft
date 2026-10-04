@@ -66,9 +66,18 @@ public final class HealingBy extends By implements LocatorSpec {
 
     public HealingBy timeout(Duration d) { return new HealingBy(primary, description, heal, d.toMillis(), proxied, origin, within); }
 
-    /** Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}. */
+    /**
+     * Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}.
+     *
+     * @throws IllegalArgumentException for an XPath primary when the chain ends in a shadow root,
+     *         where Selenium supports only CSS
+     */
     public HealingBy within(String... hops) {
-        return new HealingBy(primary, description, heal, timeoutMs, proxied, origin, Within.parseAll(hops));
+        List<Within.Hop> parsed = Within.parseAll(hops);
+        if (primary instanceof By.ByXPath && ContextResolver.endsInShadow(parsed)) {
+            throw new IllegalArgumentException(displayName() + ": " + LocatorBuilder.SHADOW_CSS_ONLY);
+        }
+        return new HealingBy(primary, description, heal, timeoutMs, proxied, origin, parsed);
     }
 
     public HealingBy heal(boolean heal) { return new HealingBy(primary, description, heal, timeoutMs, proxied, origin, within); }
@@ -78,7 +87,7 @@ public final class HealingBy extends By implements LocatorSpec {
 
     public By primary() { return primary; }
 
-    public List<Within.Hop> within() { return within; }
+    @Override public List<Within.Hop> within() { return within; }
 
     // ---- By ------------------------------------------------------------------------------
 
