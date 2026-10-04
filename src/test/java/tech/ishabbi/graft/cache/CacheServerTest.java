@@ -56,6 +56,21 @@ class CacheServerTest {
     }
 
     @Test
+    void keepsWithinThroughPutThenGet() throws Exception {
+        server = CacheServer.start(0, new MemoryLocatorStore(), null, () -> true);
+        URI entry = entry(server, "default", "k");
+        String body = "{\"kind\":\"css\",\"value\":\"button\",\"within\":[\"frame=#pay\",\"shadow=card\"]}";
+
+        HttpResponse<String> put = send("PUT", entry, body, null);
+        assertEquals(200, put.statusCode());
+        assertTrue(put.body().contains("\"within\":[\"frame=#pay\",\"shadow=card\"]"), put.body());
+        assertTrue(send("GET", entry, null, null).body().contains("\"within\":[\"frame=#pay\",\"shadow=card\"]"));
+
+        HttpResponse<String> bad = send("PUT", entry, "{\"kind\":\"css\",\"value\":\"b\",\"within\":[\"nope\"]}", null);
+        assertEquals(400, bad.statusCode());
+    }
+
+    @Test
     void rejectsBadNamespaceMissingCutoffAndMissingToken() throws Exception {
         server = CacheServer.start(0, new MemoryLocatorStore(), "secret", () -> true);
         URI badNs = URI.create(server.baseUrl() + "/v1/namespaces/has%20space/entries");

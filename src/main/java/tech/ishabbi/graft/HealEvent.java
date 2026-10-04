@@ -39,6 +39,7 @@ public record HealEvent(
         m.put("suggestedLocator", suggestedLocator());
         m.put("suggestionKind", suggestion == null ? null : suggestion.kind());
         m.put("suggestionValue", suggestion == null ? null : suggestion.value());
+        if (suggestion != null && !suggestion.within().isEmpty()) m.put("suggestionWithin", suggestion.within());
         m.put("durationMs", duration.toMillis());
         m.put("at", at.toString());
         return m;

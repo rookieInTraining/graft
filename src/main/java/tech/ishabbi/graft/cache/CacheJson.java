@@ -1,12 +1,15 @@
 package tech.ishabbi.graft.cache;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import tech.ishabbi.graft.LocatorSuggestion;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** JSON for the HTTP API. The file store keeps its own shape, including {@code annotation}. */
@@ -47,7 +50,7 @@ final class CacheJson {
     /** {@code null} when {@code kind} or {@code value} is missing. {@code learnedAt} is not taken from the client. */
     static LocatorSuggestion parseSuggestion(String json) {
         JsonObject o = JsonParser.parseString(json).getAsJsonObject();
-        return LocatorSuggestion.of(str(o, "kind"), str(o, "value"));
+        return suggestion(o);
     }
 
     static String originOf(String json) {
@@ -58,10 +61,11 @@ final class CacheJson {
         return str(JsonParser.parseString(json).getAsJsonObject(), "framework");
     }
 
-    private static Map<String, String> fields(StoredEntry e) {
-        Map<String, String> o = new LinkedHashMap<>();
+    private static Map<String, Object> fields(StoredEntry e) {
+        Map<String, Object> o = new LinkedHashMap<>();
         o.put("kind", e.suggestion().kind());
         o.put("value", e.suggestion().value());
+        if (!e.suggestion().within().isEmpty()) o.put("within", e.suggestion().within());
         o.put("origin", e.origin() == null ? "" : e.origin());
         if (e.framework() != null) o.put("framework", e.framework());
         o.put("learnedAt", e.learnedAt());
@@ -69,8 +73,20 @@ final class CacheJson {
     }
 
     private static StoredEntry from(JsonObject o, String learnedAt) {
-        return new StoredEntry(LocatorSuggestion.of(str(o, "kind"), str(o, "value")),
-                str(o, "origin"), learnedAt, str(o, "framework"));
+        return new StoredEntry(suggestion(o), str(o, "origin"), learnedAt, str(o, "framework"));
+    }
+
+    /** The optional {@code within} is a JSON string array; missing means top-level. */
+    private static LocatorSuggestion suggestion(JsonObject o) {
+        return LocatorSuggestion.of(str(o, "kind"), str(o, "value"), within(o));
+    }
+
+    static List<String> within(JsonObject o) {
+        JsonElement e = o.get("within");
+        if (e == null || e.isJsonNull()) return List.of();
+        List<String> hops = new ArrayList<>();
+        for (JsonElement hop : e.getAsJsonArray()) hops.add(hop.getAsString());
+        return hops;
     }
 
     private static String str(JsonObject o, String k) {

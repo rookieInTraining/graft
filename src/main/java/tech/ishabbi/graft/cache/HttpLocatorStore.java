@@ -60,9 +60,10 @@ public final class HttpLocatorStore implements LearnedLocatorStore {
     @Override
     public void learn(String key, LocatorSuggestion suggestion, String origin, String framework) {
         if (suggestion == null) return;
-        Map<String, String> body = new LinkedHashMap<>();
+        Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", suggestion.kind());
         body.put("value", suggestion.value());
+        if (!suggestion.within().isEmpty()) body.put("within", suggestion.within());
         body.put("origin", origin == null ? "" : origin);
         if (framework != null) body.put("framework", framework);
         try {

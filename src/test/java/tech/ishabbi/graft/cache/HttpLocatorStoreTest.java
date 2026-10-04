@@ -36,6 +36,18 @@ class HttpLocatorStoreTest {
     }
 
     @Test
+    void withinSurvivesTheRoundTrip() {
+        server = CacheServer.start(0, new MemoryLocatorStore(), "secret", () -> true);
+        client().learn("k", LocatorSuggestion.of("css", "button", java.util.List.of("frame=#pay", "shadow=card")),
+                "Pay.java:3", "PLAYWRIGHT");
+
+        StoredEntry entry = client().get("k").orElseThrow();
+        assertEquals(java.util.List.of("frame=#pay", "shadow=card"), entry.suggestion().within());
+        assertEquals(java.util.List.of("frame=#pay", "shadow=card"),
+                client().snapshot().get("k").suggestion().within());
+    }
+
+    @Test
     void refusedConnectionIsAnEmptyGet() {
         HttpLocatorStore store = new HttpLocatorStore(
                 URI.create("http://127.0.0.1:1"), "default", null, Duration.ofMillis(200));
