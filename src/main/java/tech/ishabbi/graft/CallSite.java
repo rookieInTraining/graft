@@ -23,6 +23,8 @@ public final class CallSite {
     /**
      * Graft's own frames are recognised by where they were loaded from, not by package name, so
      * callers that share the {@code tech.ishabbi.graft} prefix (Graft's tests, examples) still count.
+     * When Graft is shaded into the caller's own jar, every frame shares that location, so
+     * {@code origin} degrades to {@code <unknown>} (report-only: it labels reports and stored rows).
      */
     private static boolean isGraft(Class<?> c) {
         CodeSource graft = codeSource(CallSite.class);
