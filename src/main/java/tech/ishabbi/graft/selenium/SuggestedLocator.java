@@ -4,6 +4,7 @@ import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.Framework;
 import tech.ishabbi.graft.LocatorSuggestion;
 import org.openqa.selenium.JavascriptExecutor;
+import org.openqa.selenium.Rectangle;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 
@@ -36,7 +37,7 @@ final class SuggestedLocator {
      * of {@link FramePath#hopsFor} prepended. The driver must be in the element's frame.
      */
     static LocatorSuggestion suggest(WebDriver driver, WebElement el, Framework framework) {
-        if (framework == Framework.APPIUM) return suggestMobile(el);
+        if (framework == Framework.APPIUM) return suggestMobile(driver, el);
         LocatorSuggestion inDocument = suggestWeb(driver, el);
         return inDocument == null ? null : withFrames(inDocument, FramePath.hopsFor(driver, el));
     }
@@ -46,7 +47,7 @@ final class SuggestedLocator {
      * ({@code null}: the frame path is unusable, so nothing is suggested).
      */
     static LocatorSuggestion suggest(WebDriver driver, WebElement el, Framework framework, List<String> frameHops) {
-        if (framework == Framework.APPIUM) return suggestMobile(el);
+        if (framework == Framework.APPIUM) return suggestMobile(driver, el);
         if (frameHops == null) return null;
         return withFrames(suggestWeb(driver, el), frameHops);
     }
@@ -105,7 +106,30 @@ final class SuggestedLocator {
         return null;
     }
 
-    private static LocatorSuggestion suggestMobile(WebElement el) {
+    /**
+     * Native: the page-source analysis of {@link NativeAnchoredLocator} (uniqueness-verified own
+     * attribute, ancestor-anchored XPath, text). Falls back to {@link #suggestMobileByAttributes}
+     * (DEBUG only; mobile drivers are flaky here) when the page source, rect or class cannot be read
+     * or the element is not found in it. A {@code null} analysis of a found element means nothing
+     * is unique: no suggestion, no fallback.
+     */
+    private static LocatorSuggestion suggestMobile(WebDriver driver, WebElement el) {
+        try {
+            WebDriver d = DriverRegistry.unwrapDriver(driver);
+            if (d == null) d = driver;
+            String source = d.getPageSource();
+            Rectangle rect = el.getRect();
+            String cls = attr(el, "className", "type");
+            NativeAnchoredLocator.Result result = NativeAnchoredLocator.analyze(source, rect, cls);
+            if (result.targetFound()) return result.suggestion();
+            LOG.log(System.Logger.Level.DEBUG, "Element not found in the native page source; using attribute-only suggestion");
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Native page source analysis failed; using attribute-only suggestion", e);
+        }
+        return suggestMobileByAttributes(el);
+    }
+
+    private static LocatorSuggestion suggestMobileByAttributes(WebElement el) {
         String v;
         if ((v = attr(el, "resource-id")) != null) return LocatorSuggestion.of("id", v);
         if ((v = attr(el, "content-desc")) != null) return LocatorSuggestion.of("accessibilityId", v);

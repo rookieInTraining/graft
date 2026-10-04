@@ -121,4 +121,36 @@ class SuggestedLocatorTest {
         assertEquals(LocatorSuggestion.of("accessibilityId", "go"),
                 SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM));
     }
+
+    @Test
+    void appiumSuggestsTheAnchoredXPathFromThePageSource() {
+        driver.pageSource = () -> NativeAnchoredLocatorTest.ANDROID;
+        RecordingStubs.Element buy = el().attr("resource-id", "com.app:id/buy").attr("className", "android.widget.Button")
+                .rect(new org.openqa.selenium.Rectangle(500, 900, 100, 580));
+        assertEquals(LocatorSuggestion.of("xpath",
+                        "//*[@resource-id='com.app:id/list']/android.view.ViewGroup[2]/android.widget.Button"),
+                SuggestedLocator.suggest(driver, buy, Framework.APPIUM));
+    }
+
+    @Test
+    void appiumNothingUniqueIsNullWithoutFallingBackToAttributes() {
+        driver.pageSource = () -> NativeAnchoredLocatorTest.ANDROID_BARE;
+        RecordingStubs.Element ok = el().attr("text", "OK").attr("className", "android.widget.Button")
+                .rect(new org.openqa.selenium.Rectangle(0, 200, 100, 500));
+        assertNull(SuggestedLocator.suggest(driver, ok, Framework.APPIUM));
+    }
+
+    @Test
+    void appiumFallsBackToAttributesWhenThePageSourceCannotBeRead() {
+        driver.pageSource = () -> { throw new IllegalStateException("flaky"); };
+        assertEquals(LocatorSuggestion.of("accessibilityId", "go"),
+                SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM));
+    }
+
+    @Test
+    void appiumFallsBackToAttributesWhenTheTargetIsNotInThePageSource() {
+        driver.pageSource = () -> NativeAnchoredLocatorTest.ANDROID;
+        assertEquals(LocatorSuggestion.of("text", "elsewhere"),
+                SuggestedLocator.suggest(driver, el().attr("text", "elsewhere"), Framework.APPIUM));
+    }
 }

@@ -113,8 +113,7 @@ final class LocatorBuilder {
                 // Works on web (any own text node), Android (@text) and iOS (@label/@name). Not
                 // normalize-space(text()): that reads only the first text node, which may be
                 // whitespace before a child element (<button>\n <i></i> Save</button>).
-                return By.xpath("//*[@text=" + xpathLiteral(v) + " or @label=" + xpathLiteral(v)
-                        + " or @name=" + xpathLiteral(v) + " or text()[normalize-space()=" + xpathLiteral(v) + "]]");
+                return By.xpath(textXPath(v));
             case TEST_ID:
                 if (mobile && AppiumSupport.available()) {
                     return AppiumSupport.isAndroid(driver) ? AppiumSupport.id(v) : AppiumSupport.accessibilityId(v);
@@ -131,6 +130,12 @@ final class LocatorBuilder {
             default:
                 throw new IllegalStateException("Unhandled locator kind " + kind);
         }
+    }
+
+    /** The XPath a {@code text} locator replays as; native suggestions verify uniqueness against it. */
+    static String textXPath(String v) {
+        return "//*[@text=" + xpathLiteral(v) + " or @label=" + xpathLiteral(v)
+                + " or @name=" + xpathLiteral(v) + " or text()[normalize-space()=" + xpathLiteral(v) + "]]";
     }
 
     static String xpathLiteral(String s) {

@@ -67,7 +67,9 @@ final class RecordingStubs {
         @Override public void get(String url) {}
         @Override public String getCurrentUrl() { return ""; }
         @Override public String getTitle() { return ""; }
-        @Override public String getPageSource() { return ""; }
+        /** The native page source; the default is empty (unparseable). */
+        java.util.function.Supplier<String> pageSource = () -> "";
+        @Override public String getPageSource() { return pageSource.get(); }
         @Override public void close() {}
         @Override public void quit() {}
         @Override public Set<String> getWindowHandles() { return Set.of(); }
@@ -169,7 +171,9 @@ final class RecordingStubs {
         @Override public boolean isDisplayed() { return true; }
         @Override public Point getLocation() { return new Point(0, 0); }
         @Override public Dimension getSize() { return new Dimension(1, 1); }
-        @Override public Rectangle getRect() { return new Rectangle(0, 0, 1, 1); }
+        Rectangle rect = new Rectangle(0, 0, 1, 1);
+        Element rect(Rectangle r) { rect = r; return this; }
+        @Override public Rectangle getRect() { return rect; }
         @Override public String getCssValue(String p) { return ""; }
         @Override public <X> X getScreenshotAs(OutputType<X> t) { throw new UnsupportedOperationException(); }
         @Override public String toString() { return name; }
