@@ -103,9 +103,10 @@ final class FramePath {
 
     /**
      * The {@code within} hops (outside-in) of the frames {@code el} sits in: empty for the top-level
-     * document, {@code null} when the frame path cannot be found or an iframe on it has no unique CSS.
-     * The driver must be in {@code el}'s frame (where Alumnium leaves it) and is returned there,
-     * unless the element's frame cannot be found again (then it is left at the top).
+     * document, {@code null} when that cannot be told, the frame path cannot be found, or an iframe
+     * on it has no unique CSS. The driver must be in {@code el}'s frame (where Alumnium leaves it)
+     * and is returned there, unless the element's frame cannot be found again (then it is left at
+     * the top). A driver that cannot run JavaScript gives no hops (empty).
      */
     static List<String> hopsFor(WebDriver driver, WebElement el) {
         JavascriptExecutor js = FrameState.js(driver);
@@ -113,25 +114,54 @@ final class FramePath {
         try {
             if (Boolean.TRUE.equals(js.executeScript(FrameState.IS_TOP_JS))) return List.of();
         } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.DEBUG, "Could not tell whether the element is in a frame; assuming the top: {0}",
+            LOG.log(System.Logger.Level.DEBUG, "Could not tell whether the element is in a frame; no frame hops: {0}",
                     e.getMessage());
-            return List.of();
+            return null;
         }
         WebElement raw = SeleniumHealer.unwrap(el);
         String nonce = UUID.randomUUID().toString();
         try {
             js.executeScript(PROBE_JS, raw, nonce);
-            Optional<List<WebElement>> path = find(driver, probeJs(nonce));
-            if (path.isEmpty()) {
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Could not probe {0}; no frame hops: {1}", el, e.getMessage());
+            return null;
+        }
+        List<WebElement> path = null;
+        try {
+            Optional<List<WebElement>> found = find(driver, probeJs(nonce));
+            if (found.isEmpty()) {
+                // The one unavoidable leftover: the element's frame cannot be reached again, so its
+                // data-graft-probe attribute stays (harmless to locators; not a stable attribute).
                 LOG.log(System.Logger.Level.DEBUG, "Could not find the frame of {0}; no frame hops", el);
                 return null;
             }
-            List<String> hops = framesHops(driver, js, path.get());
-            js.executeScript(UNPROBE_JS, raw);
-            return hops;
+            path = found.get();
+            return framesHops(driver, js, path);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.DEBUG, "Could not derive the frame hops of {0}: {1}", el, e.getMessage());
             return null;
+        } finally {
+            if (path != null) unprobe(driver, js, path, raw);
+        }
+    }
+
+    /**
+     * Removes the probe. Normally the driver is already in the element's frame; if deriving the
+     * hops failed midway, it walks the path from the top first. Ends in the element's frame.
+     */
+    private static void unprobe(WebDriver driver, JavascriptExecutor js, List<WebElement> path, WebElement raw) {
+        try {
+            js.executeScript(UNPROBE_JS, raw);
+            return;
+        } catch (RuntimeException notHere) {
+            // not in the element's frame: go there first
+        }
+        try {
+            driver.switchTo().defaultContent();
+            for (WebElement iframe : path) driver.switchTo().frame(iframe);
+            js.executeScript(UNPROBE_JS, raw);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Could not remove the frame probe: {0}", e.getMessage());
         }
     }
 

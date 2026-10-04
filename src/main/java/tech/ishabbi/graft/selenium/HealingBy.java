@@ -34,8 +34,10 @@ import java.util.Objects;
  *   <li>Not {@code By.Remotable}, so RemoteWebDriver always routes through this class.</li>
  *   <li>Returns the raw {@link WebElement} unless {@link #proxied()} — then a self-healing proxy
  *       that also recovers from {@code StaleElementReferenceException}, and switches into the
- *       element's iframe for each call and back to the test's frame afterwards. A raw element in
- *       an iframe leaves the driver switched into that frame (see {@link #findElement}).</li>
+ *       element's iframe for each call and back to the test's frame afterwards; children found
+ *       through such a proxy (also with a raw {@code HealingBy}) switch &amp; restore the same way.
+ *       A raw element in an iframe leaves the driver switched into that frame (see
+ *       {@link #findElement}).</li>
  * </ul>
  */
 public final class HealingBy extends By implements LocatorSpec {

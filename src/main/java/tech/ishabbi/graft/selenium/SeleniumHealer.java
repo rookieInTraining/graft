@@ -245,10 +245,13 @@ public final class SeleniumHealer extends AbstractHealer {
         }
         if (stay) return found;
         if (lost[0]) {
-            // Rare: the frame path has an iframe without a unique CSS (or the frame search hit its caps).
-            // Without hops the frame cannot be re-entered, so the driver is left where Alumnium put it.
+            // Rare: the frame path has an iframe without a unique CSS, the frame search hit its caps, or
+            // the frame check failed. Without hops the frame cannot be re-entered, so the test's frame
+            // is not restored: the driver stays in the element's frame, or at the top when the frame
+            // search could not find that frame again.
             log.log(System.Logger.Level.DEBUG, "{0}: Alumnium found the element in a frame Graft cannot re-enter; "
-                    + "leaving the driver switched into it", spec.displayName());
+                    + "the test''s frame is not restored (the driver is in the element''s frame, or at the top "
+                    + "if that frame could not be found again)", spec.displayName());
             return found;
         }
         before.restore();

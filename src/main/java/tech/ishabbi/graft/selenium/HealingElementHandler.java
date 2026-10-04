@@ -18,6 +18,9 @@ import java.lang.reflect.Method;
  * <p>Switch &amp; restore: when the element sits in an iframe, each call captures the test's frame
  * ({@link FrameState}), enters the element's frame, delegates, and restores the test's frame,
  * also when the call throws. {@code getWrappedElement()} returns the raw element without switching.
+ * Elements that {@code findElement}/{@code findElements} return from such an element (including
+ * raw {@link HealingBy} lookups made through it) come back frame-bound ({@link FrameBoundElement}),
+ * so they stay usable after the driver is restored.
  */
 final class HealingElementHandler implements InvocationHandler {
 
@@ -53,7 +56,7 @@ final class HealingElementHandler implements InvocationHandler {
         try {
             if (state != null) healer.enter(located);
             try {
-                return method.invoke(located.element(), args);
+                return FrameBoundElement.bind(healer, located, method.invoke(located.element(), args));
             } catch (InvocationTargetException ite) {
                 Throwable cause = ite.getCause();
                 if (!(cause instanceof StaleElementReferenceException stale)) throw cause;
@@ -65,7 +68,7 @@ final class HealingElementHandler implements InvocationHandler {
                 }
                 Located fresh = healer.reResolveAfterStale(spec, primary, context, stale, state);
                 try {
-                    return method.invoke(fresh.element(), args);
+                    return FrameBoundElement.bind(healer, fresh, method.invoke(fresh.element(), args));
                 } catch (InvocationTargetException again) {
                     throw again.getCause();
                 }

@@ -54,7 +54,10 @@ class SeleniumFrameTest {
     private static final String OTHER = "<iframe id=\"other\" srcdoc=\"&lt;p id=&quot;b-content&quot;&gt;B&lt;/p&gt;\"></iframe>";
 
     private static final String SAME = "<h1 id=\"title\">Shop</h1>"
-            + "<iframe id=\"pay\" srcdoc=\"&lt;button data-testid=&quot;pay-now&quot;&gt;Pay&lt;/button&gt;\"></iframe>"
+            + "<iframe id=\"pay\" srcdoc=\"&lt;form id=&quot;card&quot;&gt;"
+            + "&lt;button type=&quot;button&quot; data-testid=&quot;pay-now&quot;&gt;Pay&lt;/button&gt;"
+            + "&lt;span class=&quot;hint&quot;&gt;One&lt;/span&gt;&lt;span class=&quot;hint&quot;&gt;Two&lt;/span&gt;"
+            + "&lt;/form&gt;\"></iframe>"
             + OTHER;
 
     private static final String INNER = "<x-pay id=\"pay\"><button>light</button></x-pay>"
@@ -154,6 +157,64 @@ class SeleniumFrameTest {
         assertEquals("Pay", page.pay.getText());
         assertAtTop();
         assertEquals(0, calls.get());
+        assertNoGraftMarkers();
+    }
+
+    @Test
+    void childrenOfAFramedProxyStayUsable() {
+        load(SAME_ORIGIN);
+        AtomicInteger calls = new AtomicInteger();
+        healer(throwing(calls));
+        WebElement card = driver.findElement(
+                HealingBy.of(By.id("card"), "the card form").within("frame=#pay").proxied());
+
+        // Container -> child: the child is usable after the driver is back at the top, and from B.
+        WebElement pay = card.findElement(By.cssSelector("[data-testid=pay-now]"));
+        assertAtTop();
+        assertEquals("Pay", pay.getText());
+        pay.click();
+        assertAtTop();
+        enterOther();
+        assertEquals("Pay", pay.getText());
+        assertInOther();
+        driver.switchTo().defaultContent();
+
+        // findElements children, and a child of a child.
+        List<WebElement> hints = card.findElements(By.cssSelector(".hint"));
+        assertAtTop();
+        assertEquals(List.of("One", "Two"), hints.stream().map(WebElement::getText).toList());
+        assertAtTop();
+        WebElement form = pay.findElement(By.xpath(".."));
+        assertEquals("form", form.getTagName());
+        assertAtTop();
+
+        // A raw HealingBy through the proxy comes back frame-bound too.
+        WebElement viaHealingBy = card.findElement(
+                HealingBy.of(By.cssSelector("[data-testid=pay-now]"), "the pay button in the card"));
+        assertAtTop();
+        assertEquals("Pay", viaHealingBy.getText());
+        assertAtTop();
+        assertEquals(0, calls.get());
+        assertNoGraftMarkers();
+    }
+
+    @Test
+    void aNestedHealInsideAProxyCallReturnsToTheTestsFrame() {
+        load(SAME_ORIGIN);
+        AtomicInteger heals = new AtomicInteger();
+        healer(alumnium(SAME_ORIGIN, heals));
+        WebElement card = driver.findElement(
+                HealingBy.of(By.id("card"), "the card form").within("frame=#pay").proxied());
+        enterPay();   // the test itself sits in iframe A, the card's own frame
+
+        // The proxy captures A, and the raw HealingBy heal inside the call captures A again.
+        WebElement pay = card.findElement(HealingBy.of(By.cssSelector("#gone"), "the pay button, healed in the card"));
+        assertEquals(1, heals.get());
+        assertInPay();
+        assertEquals("Pay", pay.getText());
+        assertInPay();
+        driver.switchTo().defaultContent();
+        assertNoGraftMarkers();
     }
 
     @Test
@@ -211,6 +272,7 @@ class SeleniumFrameTest {
         assertEquals(2, heals.get());
         assertInOther();
         driver.switchTo().defaultContent();
+        assertNoGraftMarkers();
         first.close();
         open.remove(first);
 
@@ -239,6 +301,17 @@ class SeleniumFrameTest {
         assertFalse(driver.findElements(f.inFrame()).isEmpty(), "the frame's own content is findable");
         driver.switchTo().defaultContent();
         assertEquals(0, calls.get());
+
+        // 6 (from B): raw lookups and a raw heal started inside B leave no frame markers behind.
+        enterOther();
+        assertEquals(f.text(), driver.findElement(inline).getText());
+        AtomicInteger rawHeals = new AtomicInteger();
+        healer(alumnium(f, rawHeals));
+        enterOther();
+        assertEquals(f.text(), driver.findElement(HealingBy.of(By.cssSelector("#gone-raw"), "the target, raw")).getText());
+        assertEquals(1, rawHeals.get());
+        driver.switchTo().defaultContent();
+        assertNoGraftMarkers();
     }
 
     // ---- helpers -------------------------------------------------------------------------------
@@ -257,6 +330,44 @@ class SeleniumFrameTest {
         driver.switchTo().defaultContent();
         driver.switchTo().frame(driver.findElement(By.id("other")));
         assertInOther();
+    }
+
+    private static void enterPay() {
+        driver.switchTo().defaultContent();
+        driver.switchTo().frame(driver.findElement(By.id("pay")));
+        assertInPay();
+    }
+
+    private static void assertInPay() {
+        assertFalse(driver.findElements(By.id("card")).isEmpty(), "the driver is in iframe A");
+        assertTrue(driver.findElements(By.id("title")).isEmpty(), "the driver is in iframe A");
+    }
+
+    /** Every {@code data-graft-*} attribute in a document and its open shadow roots. */
+    private static final String GRAFT_ATTRS_JS = "const bad = [];"
+            + " const walk = (root) => { for (const n of root.querySelectorAll('*')) {"
+            + " for (const a of n.getAttributeNames()) if (a.startsWith('data-graft-')) bad.push(n.localName + '[' + a + ']');"
+            + " if (n.shadowRoot) walk(n.shadowRoot); } };"
+            + " walk(document); return bad;";
+
+    /** No probe or frame marker is left in any reachable document. Ends at the top. */
+    private static void assertNoGraftMarkers() {
+        driver.switchTo().defaultContent();
+        List<String> found = new ArrayList<>();
+        collectGraftAttributes(found, "top");
+        driver.switchTo().defaultContent();
+        assertEquals(List.of(), found, "leftover Graft attributes");
+    }
+
+    private static void collectGraftAttributes(List<String> found, String where) {
+        JavascriptExecutor js = (JavascriptExecutor) driver;
+        for (Object o : (List<?>) js.executeScript(GRAFT_ATTRS_JS)) found.add(where + ": " + o);
+        List<?> frames = (List<?>) js.executeScript(FramePath.IFRAMES_JS);
+        for (int i = 0; i < frames.size(); i++) {
+            driver.switchTo().frame((WebElement) frames.get(i));
+            collectGraftAttributes(found, where + " > iframe[" + i + "]");
+            driver.switchTo().parentFrame();
+        }
     }
 
     private static void assertInOther() {

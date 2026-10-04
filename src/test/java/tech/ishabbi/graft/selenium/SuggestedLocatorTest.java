@@ -4,6 +4,9 @@ import tech.ishabbi.graft.Framework;
 import tech.ishabbi.graft.LocatorSuggestion;
 import org.junit.jupiter.api.Test;
 
+import org.openqa.selenium.WebDriver;
+
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -26,11 +29,18 @@ class SuggestedLocatorTest {
 
     @Test
     void fallbackEscapesDataTestAndAriaLabel() {
-        // The stub driver's executeScript throws, so the attribute-only fallback runs.
-        assertEquals(LocatorSuggestion.of("css", "[data-test=\"it's \\\"q\\\"\"]"),
-                SuggestedLocator.suggest(driver, el().attr("data-test", "it's \"q\""), Framework.SELENIUM));
-        assertEquals(LocatorSuggestion.of("css", "[aria-label=\"a\\\\b\"]"),
-                SuggestedLocator.suggest(driver, el().attr("aria-label", "a\\b"), Framework.SELENIUM));
+        // A driver that cannot run JavaScript: the attribute-only fallback runs, silently.
+        WebDriver noJs = (WebDriver) Proxy.newProxyInstance(WebDriver.class.getClassLoader(),
+                new Class<?>[] {WebDriver.class}, (proxy, method, args) -> {
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        List<LogRecord> logged = warnings(() -> {
+            assertEquals(LocatorSuggestion.of("css", "[data-test=\"it's \\\"q\\\"\"]"),
+                    SuggestedLocator.suggest(noJs, el().attr("data-test", "it's \"q\""), Framework.SELENIUM));
+            assertEquals(LocatorSuggestion.of("css", "[aria-label=\"a\\\\b\"]"),
+                    SuggestedLocator.suggest(noJs, el().attr("aria-label", "a\\b"), Framework.SELENIUM));
+        });
+        assertEquals(List.of(), logged);
     }
 
     @Test

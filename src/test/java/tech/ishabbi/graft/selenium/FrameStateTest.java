@@ -8,6 +8,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,7 +23,9 @@ class FrameStateTest {
     /** The iframes each frame's deep query returns, by frame name. */
     private final Map<String, List<WebElement>> iframes = new HashMap<>();
     private final List<String> scripts = new ArrayList<>();
-    private String marked = "none";   // the frame whose document carries the marker
+    private String marked = "none";   // the frame whose document carries FramePath tests' marker "x"
+    /** Capture markers: attribute name to the frame whose document carries it. */
+    private final Map<String, String> marks = new HashMap<>();
 
     private RecordingStubs.Element frame(String name, String parent) {
         RecordingStubs.Element el = new RecordingStubs.Element(name, log);
@@ -29,15 +33,23 @@ class FrameStateTest {
         return el;
     }
 
-    /** A page: the top-level check, the deep iframe query, and the marker live in {@link #marked}. */
+    /** A page: the top-level check, the deep iframe query, and per-attribute document markers. */
     private void scriptedPage() {
         driver.js = script -> {
             scripts.add(script);
             if (script.equals(FrameState.IS_TOP_JS)) return driver.frame.equals("top");
             if (script.equals(FramePath.IFRAMES_JS)) return iframes.getOrDefault(driver.frame, List.of());
-            if (script.contains("getAttribute('data-graft-frame')")) return driver.frame.equals(marked);
-            if (script.contains("setAttribute('data-graft-frame'")) { marked = driver.frame; return null; }
-            if (script.contains("removeAttribute('data-graft-frame')")) { marked = "none"; return null; }
+            Matcher has = Pattern.compile("hasAttribute\\('([^']+)'\\)").matcher(script);
+            if (has.find()) {
+                String attr = has.group(1);
+                if (attr.equals("data-graft-frame-x")) return driver.frame.equals(marked);
+                return driver.frame.equals(marks.get(attr));
+            }
+            if (script.contains("setAttribute(arguments[0]")) { marks.put((String) driver.args[0], driver.frame); return null; }
+            if (script.contains("removeAttribute(arguments[0]")) {
+                assertEquals(driver.frame, marks.remove((String) driver.args[0]), "removed in the marked document");
+                return null;
+            }
             throw new AssertionError("unexpected script " + script);
         };
     }
@@ -53,50 +65,53 @@ class FrameStateTest {
     }
 
     @Test
-    void insideAFrameRestoreFindsTheMarkedDocumentAgain() {
+    void insideAFrameCaptureFindsThePathAndLeavesNoMarker() {
         scriptedPage();
         RecordingStubs.Element a = frame("a", "top");
         frame("b", "a");
         driver.switchTo().frame(a);
         driver.switchTo().frame(iframes.get("a").get(0));   // the test sits in a > b
         FrameState state = FrameState.capture(driver);
-        assertEquals("b", marked);
+        assertEquals("b", driver.frame, "capture ends where it started");
+        assertEquals(Map.of(), marks, "the marker is removed at once");
 
         driver.switchTo().defaultContent();                  // something else moved the driver
         log.clear();
+        scripts.clear();
         state.restore();
 
         assertEquals("b", driver.frame);
-        assertEquals("none", marked, "the marker is removed");
         assertEquals(List.of("defaultContent", "frame(a)", "frame(b)"), log);
+        assertEquals(List.of(), scripts, "restore needs no scripts");
+        state.restore();
+        assertEquals("b", driver.frame, "restore can run again");
     }
 
     @Test
-    void aSecondRestoreReusesTheFramePathWithoutScripts() {
+    void nestedCapturesInOneDocumentDoNotClobberEachOther() {
         scriptedPage();
         RecordingStubs.Element a = frame("a", "top");
+        frame("other", "top");
         driver.switchTo().frame(a);
-        FrameState state = FrameState.capture(driver);
-        state.restore();                                      // finds the marker, then removes it
+        FrameState outer = FrameState.capture(driver);
+        FrameState inner = FrameState.capture(driver);       // same document, e.g. a proxy call inside a proxy call
         driver.switchTo().defaultContent();
-        log.clear();
-        scripts.clear();
-
-        state.restore();
+        inner.restore();
+        driver.switchTo().frame(iframes.get("top").get(1));
+        outer.restore();
 
         assertEquals("a", driver.frame);
-        assertEquals(List.of("defaultContent", "frame(a)"), log);
-        assertEquals(List.of(), scripts);
+        assertEquals(Map.of(), marks);
     }
 
     @Test
-    void restoreFallsBackToTheTopWhenTheFrameIsGone() {
+    void whenTheFrameCannotBeFoundRestoreGoesToTheTop() {
         scriptedPage();
         RecordingStubs.Element a = frame("a", "top");
         driver.switchTo().frame(a);
+        iframes.clear();                                      // the frame search cannot reach "a"
         FrameState state = FrameState.capture(driver);
-        iframes.clear();                                      // the iframe was removed
-        driver.switchTo().defaultContent();
+        driver.switchTo().frame(a);
 
         assertDoesNotThrow(state::restore);
         assertEquals("top", driver.frame);
