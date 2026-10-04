@@ -1,7 +1,9 @@
 package tech.ishabbi.graft.playwright;
 
+import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
 import com.microsoft.playwright.Locator;
+import java.util.Map;
 
 /** Proposes a page-object locator from the {@link Locator} Alumnium resolved. */
 final class PlaywrightSuggestedLocator {
@@ -13,7 +15,22 @@ final class PlaywrightSuggestedLocator {
         return String.valueOf(loc) + (text.isEmpty() ? "" : " \"" + abbreviate(text) + "\"");
     }
 
+    /**
+     * Runs the shared {@link AnchoredLocatorScript} on the element: a uniqueness-checked locator plus
+     * its {@code shadow=} hops, or {@code null} when none is stable. Falls back to the element's own
+     * attributes if the script cannot run.
+     */
     static LocatorSuggestion suggest(Locator loc) {
+        Object result;
+        try {
+            result = loc.evaluate(AnchoredLocatorScript.source(), Map.of("cssOnlyInShadow", false));
+        } catch (RuntimeException e) {
+            return attributeOnly(loc);
+        }
+        return AnchoredLocatorScript.toSuggestion(result);
+    }
+
+    private static LocatorSuggestion attributeOnly(Locator loc) {
         String v;
         if ((v = attr(loc, "data-testid")) != null) return LocatorSuggestion.of("testId", v);
         if ((v = attr(loc, "id")) != null) return LocatorSuggestion.of("id", v);
