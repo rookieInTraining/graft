@@ -18,9 +18,11 @@ import org.openqa.selenium.HasCapabilities;
 import org.openqa.selenium.InvalidSelectorException;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.NotFoundException;
 import org.openqa.selenium.Platform;
 import org.openqa.selenium.Rectangle;
 import org.openqa.selenium.SearchContext;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.WrapsElement;
@@ -158,12 +160,25 @@ public final class SeleniumHealer extends AbstractHealer {
      * <p>Frames: with {@code stay} (a raw {@link HealingBy#findElement}) the driver is left in the
      * element's frame. Without it (proxies) the driver is back in the test's frame on return, and
      * the caller enters {@link Located#frames()} itself for the actual call ({@link #enter}).
+     *
+     * <p>With {@code stay}, a cached element whose frames cannot be entered any more (the iframe was
+     * removed, replaced, or is not back yet) counts as stale: the entry is dropped, the test's frame
+     * restored, and the element resolved again as if uncached.
      */
     Located resolve(LocatorSpec spec, By primary, SearchContext context, boolean stay) {
         Located cached = healed.get(spec.key());
         if (cached != null) {
-            if (stay) enter(cached);
-            return cached;
+            if (!stay || cached.frames().isEmpty()) return cached;
+            FrameState before = frameState();
+            try {
+                enter(cached);
+                return cached;
+            } catch (NotFoundException | StaleElementReferenceException gone) {
+                before.restore();
+                healed.remove(spec.key());
+                log.log(System.Logger.Level.DEBUG, "{0}: the cached element''s frame cannot be entered ({1}); "
+                        + "resolving it again", spec.displayName(), gone.getMessage());
+            }
         }
         return locate(spec, primary, context, spec.locatorTimeout(config()), null, stay, null);
     }
@@ -277,6 +292,18 @@ public final class SeleniumHealer extends AbstractHealer {
                                 FrameState outer) {
         healed.remove(spec.key());
         return locate(spec, primary, context, config().pollInterval(), stale, true, outer);
+    }
+
+    /**
+     * A proxy could not enter the frames of its cached element: the iframe was removed, replaced,
+     * or is not back yet. Treated as stale, but through the normal path with the normal timeout, so
+     * a late iframe is waited for. As in {@link #reResolveAfterStale}, the driver is left in the
+     * fresh element's frame and the proxy restores {@code outer}.
+     */
+    Located reResolveAfterFrameLoss(LocatorSpec spec, By primary, SearchContext context,
+                                    StaleElementReferenceException lost, FrameState outer) {
+        healed.remove(spec.key());
+        return locate(spec, primary, context, spec.locatorTimeout(config()), lost, true, outer);
     }
 
     /** Used by {@link AlumniumBy}: Alumnium is the primary locator; failures become {@link NoSuchElementException}. */

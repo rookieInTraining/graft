@@ -1,5 +1,8 @@
 package tech.ishabbi.graft.selenium;
 
+import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.NotFoundException;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.WrapsElement;
 import org.openqa.selenium.interactions.Locatable;
@@ -20,6 +23,11 @@ import java.util.List;
  * <p>This is what {@code findElement}/{@code findElements} return on a proxy whose element sits in
  * an iframe: without it, the child would be a raw in-iframe element while the driver is back in
  * the test's frame, which Selenium reports as stale.
+ *
+ * <p>When the frame hops cannot be entered any more (the iframe was removed), or the element is not
+ * in the document they enter (the iframe was replaced, {@link #asStale}), a call throws
+ * {@link StaleElementReferenceException} with that failure as its cause, so
+ * {@code ExpectedConditions.stalenessOf(child)} keeps working.
  */
 final class FrameBoundElement implements InvocationHandler {
 
@@ -69,12 +77,40 @@ final class FrameBoundElement implements InvocationHandler {
         }
         FrameState state = healer.frameState();
         try {
-            healer.enter(located);
+            try {
+                healer.enter(located);
+            } catch (NotFoundException gone) {
+                throw new StaleElementReferenceException(
+                        "The frame of this element cannot be entered: " + gone.getMessage(), gone);
+            }
             return bind(healer, located, method.invoke(located.element(), args));
         } catch (InvocationTargetException ite) {
-            throw ite.getCause();
+            StaleElementReferenceException stale = asStale(ite.getCause(), located.element());
+            throw stale != null ? stale : ite.getCause();
         } finally {
             state.restore();
+        }
+    }
+
+    /**
+     * {@code failure}, thrown by a call on {@code el} made inside el's frame, as a stale-element
+     * failure, or {@code null} when it is something else. Besides {@link StaleElementReferenceException}
+     * itself: when the iframe was replaced, the hops enter the new document, where Chrome reports
+     * the old element as "no such element", not stale. A {@code NoSuchElementException} counts as
+     * stale only when {@code el} itself is unknown there (a cheap probe), so a missing child of
+     * {@code findElement} is not mistaken for it.
+     */
+    static StaleElementReferenceException asStale(Throwable failure, WebElement el) {
+        if (failure instanceof StaleElementReferenceException stale) return stale;
+        if (!(failure instanceof NoSuchElementException)) return null;
+        try {
+            el.getTagName();
+            return null;
+        } catch (NotFoundException | StaleElementReferenceException gone) {
+            return new StaleElementReferenceException(
+                    "The element is no longer in its frame's document: " + failure.getMessage(), failure);
+        } catch (RuntimeException probeFailed) {
+            return null;
         }
     }
 }

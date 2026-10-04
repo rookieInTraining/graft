@@ -233,4 +233,91 @@ class ContextResolverTest {
         assertEquals(1, calls.get(), "the learned text locator is unusable in a shadow root, so Alumnium runs");
         assertTrue(log.stream().noneMatch(l -> l.startsWith("find(host#shadow")), log.toString());
     }
+
+    // ---- a cached element whose iframe is gone -----------------------------------------------
+
+    static class MovedPage {
+        @Element(value = "the pay button", css = "button.pay")
+        WebElement pay;
+    }
+
+    /**
+     * {@code button.pay} is not at the top, but a learned locator finds it inside {@code frame=#pay},
+     * which caches it with that frame hop.
+     */
+    private MovedPage cacheInsideTheFrame(MemoryLocatorStore store, AtomicInteger calls) {
+        RecordingStubs.Element iframe = el("pay");
+        driver.put("top", By.cssSelector("#pay"), iframe)
+                .put("pay", By.cssSelector("[data-testid=\"pay\"]"), el("framed").attr("text", "Pay (framed)"));
+        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : null;
+        String key = tech.ishabbi.graft.ElementSpec.of(MovedPage.class, fieldOf("pay")).key();
+        store.learn(key, LocatorSuggestion.of("testId", "pay", List.of("frame=#pay")), "here", "SELENIUM");
+        MovedPage page = new MovedPage();
+        HealingPageFactory.initElements(page, healer(store, calls));
+        assertEquals("Pay (framed)", page.pay.getText());
+        return page;
+    }
+
+    private static java.lang.reflect.Field fieldOf(String name) {
+        try {
+            return MovedPage.class.getDeclaredField(name);
+        } catch (NoSuchFieldException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    void aProxyWhoseCachedIframeIsGoneReResolvesInsteadOfFailing() {
+        AtomicInteger calls = new AtomicInteger();
+        MovedPage page = cacheInsideTheFrame(new MemoryLocatorStore(), calls);
+
+        // The iframe is removed and the button now sits at the top: the cached hop cannot be entered.
+        driver.frames.get("top").remove(By.cssSelector("#pay").toString());
+        driver.put("top", By.cssSelector("button.pay"), el("moved").attr("text", "Pay (moved)"));
+
+        assertEquals("Pay (moved)", page.pay.getText());
+        assertEquals("Pay (moved)", page.pay.getText(), "the fresh element is cached, not the lost one");
+        assertEquals("top", driver.frame);
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void aRawHealingByWhoseCachedIframeIsGoneReResolvesFromTheTestsFrame() {
+        RecordingStubs.Element iframe = el("pay");
+        driver.put("top", By.cssSelector("#pay"), iframe)
+                .put("pay", By.cssSelector("[data-testid=\"pay\"]"), el("framed"));
+        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : null;
+        HealingBy pay = HealingBy.of(By.cssSelector("button.pay"), "the pay button");
+        MemoryLocatorStore store = new MemoryLocatorStore();
+        store.learn(pay.key(), LocatorSuggestion.of("testId", "pay", List.of("frame=#pay")), "here", "SELENIUM");
+        AtomicInteger calls = new AtomicInteger();
+        healer(store, calls);
+        assertEquals("framed", driver.findElement(pay).toString());
+        assertEquals("pay", driver.frame);
+        driver.switchTo().defaultContent();
+
+        driver.frames.get("top").remove(By.cssSelector("#pay").toString());
+        RecordingStubs.Element moved = el("moved");
+        driver.put("top", By.cssSelector("button.pay"), moved);
+
+        assertSame(moved, driver.findElement(pay));
+        assertEquals("top", driver.frame);
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void aFrameBoundChildWhoseIframeIsGoneIsStale() {
+        AtomicInteger calls = new AtomicInteger();
+        healer(new MemoryLocatorStore(), calls);
+        SeleniumHealer h = open.get(open.size() - 1);
+        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : null;
+        WebElement child = (WebElement) FrameBoundElement.bind(h,
+                new Located(el("parent"), Within.parseAll("frame=#pay"), driver), el("child"));
+
+        org.openqa.selenium.StaleElementReferenceException stale = assertThrows(
+                org.openqa.selenium.StaleElementReferenceException.class, child::getText);
+        assertTrue(stale.getCause() instanceof NoSuchElementException, String.valueOf(stale.getCause()));
+        assertTrue(org.openqa.selenium.support.ui.ExpectedConditions.stalenessOf(child).apply(driver));
+        assertEquals("top", driver.frame);
+    }
 }

@@ -2,6 +2,7 @@ package tech.ishabbi.graft.selenium;
 
 import tech.ishabbi.graft.LocatorSpec;
 import org.openqa.selenium.By;
+import org.openqa.selenium.NotFoundException;
 import org.openqa.selenium.SearchContext;
 import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebElement;
@@ -21,6 +22,10 @@ import java.lang.reflect.Method;
  * Elements that {@code findElement}/{@code findElements} return from such an element (including
  * raw {@link HealingBy} lookups made through it) come back frame-bound ({@link FrameBoundElement}),
  * so they stay usable after the driver is restored.
+ *
+ * <p>A cached element whose frames can no longer be entered (the iframe was removed, or is not back
+ * yet) counts as stale: the cache entry is dropped and the element re-resolved with the normal
+ * timeout. So does one whose iframe was replaced ({@link FrameBoundElement#asStale}).
  */
 final class HealingElementHandler implements InvocationHandler {
 
@@ -54,27 +59,45 @@ final class HealingElementHandler implements InvocationHandler {
 
         FrameState state = located.frames().isEmpty() ? null : healer.frameState();
         try {
-            if (state != null) healer.enter(located);
+            if (state != null) {
+                try {
+                    healer.enter(located);
+                } catch (NotFoundException | StaleElementReferenceException gone) {
+                    // The cached element's iframe is gone or not back yet: as stale, but through the
+                    // normal path with the normal timeout, so a late iframe is waited for.
+                    state.restore();
+                    StaleElementReferenceException stale = new StaleElementReferenceException(
+                            "The frame of the cached element cannot be entered: " + gone.getMessage(), gone);
+                    return call(healer.reResolveAfterFrameLoss(spec, primary, context, stale, state), method, args);
+                }
+            }
             try {
                 return FrameBoundElement.bind(healer, located, method.invoke(located.element(), args));
             } catch (InvocationTargetException ite) {
                 Throwable cause = ite.getCause();
-                if (!(cause instanceof StaleElementReferenceException stale)) throw cause;
+                StaleElementReferenceException stale = state == null
+                        ? (cause instanceof StaleElementReferenceException s ? s : null)
+                        : FrameBoundElement.asStale(cause, located.element());
+                if (stale == null) throw cause;
                 // Re-resolve from the test's frame; the fresh element's frame is entered by the re-resolve.
                 if (state != null) {
                     state.restore();
                 } else {
                     state = healer.frameState();
                 }
-                Located fresh = healer.reResolveAfterStale(spec, primary, context, stale, state);
-                try {
-                    return FrameBoundElement.bind(healer, fresh, method.invoke(fresh.element(), args));
-                } catch (InvocationTargetException again) {
-                    throw again.getCause();
-                }
+                return call(healer.reResolveAfterStale(spec, primary, context, stale, state), method, args);
             }
         } finally {
             if (state != null) state.restore();
+        }
+    }
+
+    /** The call on a freshly re-resolved element; the re-resolve left the driver in its frame. */
+    private Object call(Located fresh, Method method, Object[] args) throws Throwable {
+        try {
+            return FrameBoundElement.bind(healer, fresh, method.invoke(fresh.element(), args));
+        } catch (InvocationTargetException again) {
+            throw again.getCause();
         }
     }
 }

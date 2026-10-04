@@ -21,6 +21,8 @@ import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -36,6 +38,7 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -233,6 +236,79 @@ class SeleniumFrameTest {
                 .within("shadow=#shell", "frame=[data-testid=\"pay-frame\"]", "shadow=#pay"));
     }
 
+    /** Removes iframe A and re-adds it, now or after {@code arguments[0]} ms, with new content. */
+    private static final String REPLACE_PAY_JS = "const old = document.getElementById('pay');"
+            + " const parent = old.parentNode; const next = old.nextSibling; old.remove();"
+            + " const add = () => { const f = document.createElement('iframe'); f.id = 'pay';"
+            + " f.srcdoc = '<form id=\"card\"><button type=\"button\" data-testid=\"pay-now\">Pay again</button></form>';"
+            + " parent.insertBefore(f, next); };"
+            + " if (arguments[0] > 0) setTimeout(add, arguments[0]); else add();";
+
+    @Test
+    void aCachedHealWhoseIframeIsReplacedRecovers() {
+        cachedHealRecoversAfterTheIframeIsReAdded(0);
+    }
+
+    @Test
+    void aCachedHealWhoseIframeComesBackLateRecovers() {
+        cachedHealRecoversAfterTheIframeIsReAdded(700);
+    }
+
+    private void cachedHealRecoversAfterTheIframeIsReAdded(long delayMillis) {
+        load(SAME_ORIGIN);
+        AtomicInteger heals = new AtomicInteger();
+        healer(patientAlumnium(heals));
+        WebElement el = driver.findElement(HealingBy.of(By.cssSelector("#gone"), "the target").proxied());
+        assertEquals("Pay", el.getText());
+        assertEquals(1, heals.get());
+        assertAtTop();
+
+        ((JavascriptExecutor) driver).executeScript(REPLACE_PAY_JS, delayMillis);
+
+        // The cached element's iframe is gone (or not back yet): the proxy re-resolves, it does not fail.
+        assertEquals("Pay again", el.getText());
+        assertAtTop();
+        assertEquals("Pay again", el.getText(), "the fresh element is cached");
+        assertAtTop();
+        assertTrue(heals.get() <= 2, "at most one more Alumnium call: " + heals.get());
+        assertEquals(LocatorSuggestion.of("testId", "pay-now", List.of("frame=#pay")),
+                store.get(HealingBy.of(By.cssSelector("#gone"), "the target").key()).orElseThrow().suggestion());
+
+        // The test sits in iframe B: the recovered proxy still comes back to B.
+        enterOther();
+        el.click();
+        assertInOther();
+        driver.switchTo().defaultContent();
+        assertNoGraftMarkers();
+    }
+
+    @Test
+    void aFrameBoundChildGoesStaleWhenItsIframeIsReplacedOrRemoved() {
+        load(SAME_ORIGIN);
+        healer(throwing(new AtomicInteger()));
+        WebElement card = driver.findElement(
+                HealingBy.of(By.id("card"), "the card form").within("frame=#pay").proxied());
+        WebElement pay = card.findElement(By.cssSelector("[data-testid=pay-now]"));
+        assertFalse(ExpectedConditions.stalenessOf(pay).apply(driver));
+        // A missing child of a live frame-bound element is still a plain NoSuchElementException.
+        assertThrows(org.openqa.selenium.NoSuchElementException.class, () -> pay.findElement(By.id("nothing")));
+        assertAtTop();
+
+        ((JavascriptExecutor) driver).executeScript(REPLACE_PAY_JS, 0);
+        assertTrue(ExpectedConditions.stalenessOf(pay).apply(driver), "replaced iframe");
+        assertAtTop();
+
+        new WebDriverWait(driver, Duration.ofSeconds(10)).until(d -> (Boolean) ((JavascriptExecutor) d).executeScript(
+                "const f = document.getElementById('pay');"
+                        + " return !!(f && f.contentDocument && f.contentDocument.querySelector('[data-testid=pay-now]'));"));
+        WebElement again = card.findElement(By.cssSelector("[data-testid=pay-now]"));
+        assertEquals("Pay again", again.getText());
+        ((JavascriptExecutor) driver).executeScript("document.getElementById('pay').remove();");
+        assertTrue(ExpectedConditions.stalenessOf(again).apply(driver), "removed iframe");
+        assertAtTop();
+        assertNoGraftMarkers();
+    }
+
     static class PayPage {
         @Element(value = "the pay button", within = {"frame=#pay"}, testId = "pay-now")
         WebElement pay;
@@ -389,6 +465,21 @@ class SeleniumFrameTest {
             calls.incrementAndGet();
             driver.switchTo().defaultContent();
             return f.alumnium().apply(driver);
+        };
+    }
+
+    /**
+     * Like Alumnium on a page that is still changing: waits (up to 10 s) for iframe A and its pay
+     * button, then switches into it and stays there.
+     */
+    private static AiFinder patientAlumnium(AtomicInteger calls) {
+        return description -> {
+            calls.incrementAndGet();
+            driver.switchTo().defaultContent();
+            WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+            WebElement frame = wait.until(d -> d.findElements(By.id("pay")).stream().findFirst().orElse(null));
+            driver.switchTo().frame(frame);
+            return wait.until(d -> d.findElements(By.cssSelector("[data-testid=pay-now]")).stream().findFirst().orElse(null));
         };
     }
 
