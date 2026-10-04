@@ -12,6 +12,8 @@
   // opts.cssOnly: the element's own locator is always kind 'css' (testId / id / name become
   //   attribute or #id CSS, escaped here with CSS.escape; no text tier). Used for an iframe
   //   element, whose frame= hop must be CSS.
+  // opts.noText: skip the text tier, so the root-path tier answers instead. Selenium re-runs with it
+  //   when a text result does not replay to the element alone (its text XPath matches more).
   opts = opts || {};
   const pierce = !!opts.pierce;
   const cssOnly = !!opts.cssOnly;
@@ -167,7 +169,7 @@
   // Main: the element's own locator, then shadow hops outward to the document.
   let root = el.getRootNode();
   if (!isDocument(root) && !isShadowRoot(root)) return null; // detached
-  const skipText = cssOnly || (!!opts.cssOnlyInShadow && isShadowRoot(root));
+  const skipText = cssOnly || !!opts.noText || (!!opts.cssOnlyInShadow && isShadowRoot(root));
   const own = ownTier(el, root, cssOnly) || anchoredTier(el, root)
     || (skipText ? null : textTier(el, root)) || rootPathTier(el, root);
   if (!own) return null;

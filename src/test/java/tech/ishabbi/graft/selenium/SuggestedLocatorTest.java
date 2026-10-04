@@ -105,6 +105,51 @@ class SuggestedLocatorTest {
         assertNotNull(logged.get(0).getThrown());
     }
 
+    // ---- a text suggestion must replay to the target (R24) --------------------------------------
+
+    private static final org.openqa.selenium.By EMAIL_XPATH =
+            org.openqa.selenium.By.xpath(LocatorBuilder.textXPath("Email"));
+
+    /** The anchored script: text on the first run, {@code fallback} when asked to skip text. */
+    private List<Map<?, ?>> textThen(Map<String, Object> fallback) {
+        List<Map<?, ?>> opts = new ArrayList<>();
+        scripts(script -> {
+            Map<?, ?> o = (Map<?, ?>) driver.args[1];
+            opts.add(o);
+            return Boolean.TRUE.equals(o.get("noText")) ? fallback : Map.of("kind", "text", "value", "Email");
+        });
+        return opts;
+    }
+
+    @Test
+    void aTextSuggestionThatReplaysToTheTargetIsKept() {
+        RecordingStubs.Element target = el();
+        driver.put("top", EMAIL_XPATH, target);
+        List<Map<?, ?>> opts = textThen(Map.of("kind", "css", "value", ":root > body > label"));
+        assertEquals(LocatorSuggestion.of("text", "Email"), SuggestedLocator.suggest(driver, target, Framework.SELENIUM, List.of()));
+        assertEquals(1, opts.size(), "verified: no second run");
+    }
+
+    @Test
+    void aTextSuggestionThatReplaysToAnotherElementAsksForTheNextTier() {
+        RecordingStubs.Element target = el();
+        driver.put("top", EMAIL_XPATH, el());   // the replay XPath finds something else first
+        List<Map<?, ?>> opts = textThen(Map.of("kind", "css", "value", ":root > body > label"));
+        assertEquals(LocatorSuggestion.of("css", ":root > body > label", List.of("frame=#pay")),
+                SuggestedLocator.suggest(driver, target, Framework.SELENIUM, List.of("frame=#pay")));
+        assertEquals(2, opts.size());
+        assertEquals(Boolean.TRUE, opts.get(1).get("noText"));
+        assertEquals(Boolean.FALSE, opts.get(1).get("pierce"), "the other options are kept");
+    }
+
+    @Test
+    void aTextSuggestionThatReplaysToNothingAsksForTheNextTier() {
+        RecordingStubs.Element target = el();
+        List<Map<?, ?>> opts = textThen(null);   // nothing else is unique
+        assertNull(SuggestedLocator.suggest(driver, target, Framework.SELENIUM, List.of()));
+        assertEquals(2, opts.size());
+    }
+
     @Test
     void frameHopsArePrependedToTheInDocumentSuggestion() {
         LocatorSuggestion inDoc = LocatorSuggestion.of("css", "div > button", List.of("shadow=#card"));

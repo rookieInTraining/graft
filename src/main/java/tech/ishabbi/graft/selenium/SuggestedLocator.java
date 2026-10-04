@@ -3,6 +3,7 @@ package tech.ishabbi.graft.selenium;
 import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.Framework;
 import tech.ishabbi.graft.LocatorSuggestion;
+import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.Rectangle;
 import org.openqa.selenium.WebDriver;
@@ -23,6 +24,8 @@ final class SuggestedLocator {
 
     private static final System.Logger LOG = System.getLogger(SuggestedLocator.class.getName());
     private static final Map<String, Object> SCRIPT_OPTIONS = Map.of("cssOnlyInShadow", true, "pierce", false);
+    private static final Map<String, Object> NO_TEXT_OPTIONS =
+            Map.of("cssOnlyInShadow", true, "pierce", false, "noText", true);
 
     private SuggestedLocator() {}
 
@@ -69,16 +72,27 @@ final class SuggestedLocator {
      * when the driver cannot run JS, the script throws (WARNING with the stack trace) or returns a
      * malformed result (one-line WARNING). A {@code null} result means nothing is unique: no
      * suggestion, and no warning.
+     *
+     * <p>A {@code text} suggestion replays as {@link LocatorBuilder#textXPath}, which matches more
+     * than the script counts (name / label attributes, any own text node). It is kept only when that
+     * XPath finds exactly the target in the element's document, where the driver is during the heal;
+     * otherwise the script runs again with {@code noText} for the next tier.
      */
     private static LocatorSuggestion suggestWeb(WebDriver driver, WebElement el) {
         WebDriver d = DriverRegistry.unwrapDriver(driver);
         if (d == null) d = driver;
         if (d instanceof JavascriptExecutor js) {
             try {
-                Object result = js.executeScript("return (" + AnchoredLocatorScript.source() + ")(arguments[0], arguments[1]);",
-                        SeleniumHealer.unwrap(el), SCRIPT_OPTIONS);
-                if (result == null) return null;   // nothing unique: no suggestion, nothing learned
+                WebElement target = SeleniumHealer.unwrap(el);
+                Object result = runScript(js, target, SCRIPT_OPTIONS);
                 LocatorSuggestion s = AnchoredLocatorScript.toSuggestion(result);
+                if (s != null && "text".equals(s.kind()) && !replaysTo(d, s.value(), target)) {
+                    LOG.log(System.Logger.Level.DEBUG, "Text suggestion {0} does not replay to the element alone; "
+                            + "asking for the next tier", s);
+                    result = runScript(js, target, NO_TEXT_OPTIONS);
+                    s = AnchoredLocatorScript.toSuggestion(result);
+                }
+                if (result == null) return null;   // nothing unique: no suggestion, nothing learned
                 if (s != null) return s;
                 LOG.log(System.Logger.Level.WARNING, "Anchored locator script returned an unexpected result ("
                         + abbreviate(String.valueOf(result)) + "); falling back to attribute-only suggestion");
@@ -88,6 +102,21 @@ final class SuggestedLocator {
             }
         }
         return suggestByAttributes(el);
+    }
+
+    private static Object runScript(JavascriptExecutor js, WebElement target, Map<String, Object> options) {
+        return js.executeScript("return (" + AnchoredLocatorScript.source() + ")(arguments[0], arguments[1]);",
+                target, options);
+    }
+
+    /** The text locator's replay XPath, in the current document, finds exactly {@code target}. */
+    private static boolean replaysTo(WebDriver driver, String text, WebElement target) {
+        try {
+            List<WebElement> found = driver.findElements(By.xpath(LocatorBuilder.textXPath(text)));
+            return found.size() == 1 && target.equals(found.get(0));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static LocatorSuggestion suggestByAttributes(WebElement el) {
