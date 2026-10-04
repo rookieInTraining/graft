@@ -7,8 +7,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
-/** In-memory store for the HTTP server tests. Conditional forget matches the Redis rule. */
-final class MemoryLocatorStore implements LearnedLocatorStore {
+/** In-memory store for tests (HTTP server, healer replay). Conditional forget matches the Redis rule. */
+public final class MemoryLocatorStore implements LearnedLocatorStore {
 
     private final Map<String, StoredEntry> entries = new LinkedHashMap<>();
 

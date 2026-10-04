@@ -314,6 +314,28 @@ class AnchoredSuggestionTest {
         assertSuggestion(AnchoredLocatorScript.toSuggestion(result), "name", "cc", List.of("shadow=#card"));
     }
 
+    @Test
+    void cssOnlyForcesCssForTheElementItself() {
+        Map<String, Object> cssOnly = Map.of("cssOnly", true, "pierce", true);
+        page.setContent("<iframe data-testid='pay' data-graft-probe='t'></iframe>"
+                + "<iframe id='pay.frame:1' data-graft-probe='u'></iframe>"
+                + "<iframe name='checkout' data-graft-probe='v'></iframe>"
+                + "<div><p>x</p></div><div><p data-graft-probe='w'>Only text</p></div>");
+        assertSuggestion(cssOnlyAt(TARGET, cssOnly), "css", "[data-testid=\"pay\"]", List.of());
+        // The id needs CSS.escape.
+        LocatorSuggestion escaped = cssOnlyAt("[data-graft-probe=u]", cssOnly);
+        assertSuggestion(escaped, "css", "#pay\\.frame\\:1", List.of());
+        assertEquals(1, page.locator(escaped.value()).count());
+        assertSuggestion(cssOnlyAt("[data-graft-probe=v]", cssOnly), "css", "[name=\"checkout\"]", List.of());
+        // No text tier with cssOnly: the structural path is used instead.
+        assertSuggestion(cssOnlyAt("[data-graft-probe=w]", cssOnly), "css",
+                ":root > body > div:nth-of-type(2) > p", List.of());
+    }
+
+    private LocatorSuggestion cssOnlyAt(String css, Map<String, Object> opts) {
+        return AnchoredLocatorScript.toSuggestion(page.locator(css).evaluate(AnchoredLocatorScript.source(), opts));
+    }
+
     private LocatorSuggestion suggestFor(String html) {
         page.setContent(html);
         return PlaywrightSuggestedLocator.suggest(page.locator(TARGET));

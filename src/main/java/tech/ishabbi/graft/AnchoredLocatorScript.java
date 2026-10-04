@@ -14,8 +14,10 @@ import java.util.Map;
  * runs it with {@code locator.evaluate(source(), opts)}, Selenium with
  * {@code executeScript("return (" + source() + ")(arguments[0], arguments[1]);", el, opts)}.
  *
- * <p>The script returns {@code {within: string[], kind: string, value: string}} or {@code null};
- * {@code opts} is {@code {cssOnlyInShadow: boolean}} (skip the text tier inside shadow roots).
+ * <p>The script returns {@code {within: string[], kind: string, value: string}} or {@code null}.
+ * {@code opts} is {@code {cssOnlyInShadow, pierce, cssOnly}} (all boolean): skip the text tier inside
+ * shadow roots; count uniqueness across nested open shadow roots; force a CSS locator for the element
+ * itself (for an iframe's {@code frame=} hop). The script header documents each.
  */
 public final class AnchoredLocatorScript {
 

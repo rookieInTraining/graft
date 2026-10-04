@@ -10,6 +10,7 @@ import tech.ishabbi.graft.HealingConfig;
 import tech.ishabbi.graft.HealingSelector;
 import tech.ishabbi.graft.LocatorSpec;
 import tech.ishabbi.graft.LocatorSuggestion;
+import tech.ishabbi.graft.Within;
 import tech.ishabbi.graft.internal.AlumniHolder;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
@@ -18,6 +19,7 @@ import com.microsoft.playwright.options.WaitForSelectorState;
 
 import java.lang.reflect.Proxy;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -123,12 +125,17 @@ public final class PlaywrightHealer extends AbstractHealer {
     /** A self-healing {@link Locator} for a selector constant. */
     public Locator locator(HealingSelector selector) {
         Object primary = selector.primary();
+        List<Within.Hop> within = selector.within();
         Supplier<Locator> supplier;
         if (primary == null) {
             supplier = () -> null;
         } else if (primary instanceof String s) {
-            supplier = () -> page.locator(s);
+            supplier = () -> PlaywrightScope.enter(page, within).locator(s);
         } else if (primary instanceof Function<?, ?> fn) {
+            if (!within.isEmpty()) {
+                throw new IllegalArgumentException(selector.displayName() + ": within is not supported with a "
+                        + "Function<Page, Locator> primary, which chooses its own scope; use a String selector");
+            }
             @SuppressWarnings("unchecked")
             Function<Page, Locator> typed = (Function<Page, Locator>) fn;
             supplier = () -> typed.apply(page);
@@ -216,33 +223,32 @@ public final class PlaywrightHealer extends AbstractHealer {
     Locator primaryLocator(ElementSpec spec) {
         if (!spec.hasInlineLocator()) return null;
         LocatorKind kind = spec.locatorKind().orElseThrow();
-        String v = spec.locatorValue();
-        switch (kind) {
-            case ID:       return page.locator("[id=" + quote(v) + "]");
-            case CSS:
-            case SELECTOR: return page.locator(v);
-            case XPATH:    return page.locator("xpath=" + v);
-            case NAME:     return page.locator("[name=" + quote(v) + "]");
-            case TEXT:     return page.getByText(v, new Page.GetByTextOptions().setExact(true));
-            case TEST_ID:  return page.getByTestId(v);
-            default:
-                throw new IllegalStateException("@Element on " + spec.displayName() + " uses " + kind
-                        + ", which is an Appium locator; Playwright supports id/css/xpath/name/text/testId/selector");
+        String name = switch (kind) {
+            case ID -> "id";
+            case CSS, SELECTOR -> "css";
+            case XPATH -> "xpath";
+            case NAME -> "name";
+            case TEXT -> "text";
+            case TEST_ID -> "testId";
+            default -> throw new IllegalStateException("@Element on " + spec.displayName() + " uses " + kind
+                    + ", which is an Appium locator; Playwright supports id/css/xpath/name/text/testId/selector");
+        };
+        try {
+            return PlaywrightScope.enter(page, spec.within()).find(name, spec.locatorValue());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("@Element on " + spec.displayName() + ": " + e.getMessage(), e);
         }
     }
 
+    /** Replays a learned suggestion in its {@code within} scope; {@code null} on a miss or an unreplayable kind. */
     private Locator tryLearned(LocatorSuggestion s) {
         Locator loc;
-        switch (s.kind()) {
-            case "id":     loc = page.locator("[id=" + quote(s.value()) + "]"); break;
-            case "css":    loc = page.locator(s.value()); break;
-            case "xpath":  loc = page.locator("xpath=" + s.value()); break;
-            case "name":   loc = page.locator("[name=" + quote(s.value()) + "]"); break;
-            case "text":   loc = page.getByText(s.value(), new Page.GetByTextOptions().setExact(true)); break;
-            case "testId": loc = page.getByTestId(s.value()); break;
-            default:       return null;
+        try {
+            loc = PlaywrightScope.enter(page, Within.parseAll(s.within())).find(s.kind(), s.value());
+        } catch (IllegalArgumentException unreplayable) {
+            return null; // e.g. xpath under a shadow hop
         }
-        return loc.count() > 0 ? loc : null;
+        return loc != null && loc.count() > 0 ? loc : null;
     }
 
     private Locator findWithAlumnium(LocatorSpec spec) {
@@ -250,9 +256,5 @@ public final class PlaywrightHealer extends AbstractHealer {
         if (found instanceof Locator loc) return loc;
         throw new IllegalStateException("AI finder returned " + (found == null ? "null" : found.getClass().getName())
                 + " for a Playwright page; expected Locator");
-    }
-
-    private static String quote(String s) {
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 }

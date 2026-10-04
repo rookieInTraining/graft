@@ -2,7 +2,11 @@ package tech.ishabbi.graft.playwright;
 
 import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.LocatorSuggestion;
+import com.microsoft.playwright.ElementHandle;
+import com.microsoft.playwright.Frame;
 import com.microsoft.playwright.Locator;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /** Proposes a page-object locator from the {@link Locator} Alumnium resolved. */
@@ -12,6 +16,8 @@ final class PlaywrightSuggestedLocator {
 
     /** Playwright replay pierces open shadow DOM, so uniqueness is counted across it. */
     private static final Map<String, Object> SCRIPT_OPTS = Map.of("cssOnlyInShadow", false, "pierce", true);
+    /** For an iframe element: its frame= hop must be CSS. */
+    private static final Map<String, Object> FRAME_OPTS = Map.of("cssOnlyInShadow", false, "pierce", true, "cssOnly", true);
 
     private PlaywrightSuggestedLocator() {}
 
@@ -23,18 +29,63 @@ final class PlaywrightSuggestedLocator {
     /**
      * Runs the shared {@link AnchoredLocatorScript} on the element: a uniqueness-checked locator plus
      * its {@code shadow=} hops, or {@code null} when none is stable. Falls back to the element's own
-     * attributes if the script cannot run.
+     * attributes if the script cannot run. When the element sits in an iframe, the frame path
+     * ({@code frame=} hops, and the shadow hops of each iframe element) is prepended.
      */
     static LocatorSuggestion suggest(Locator loc) {
-        Object result;
+        LocatorSuggestion own;
         try {
-            result = loc.evaluate(AnchoredLocatorScript.source(), SCRIPT_OPTS);
+            own = AnchoredLocatorScript.toSuggestion(loc.evaluate(AnchoredLocatorScript.source(), SCRIPT_OPTS));
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING,
                     "Anchored-locator script failed for " + loc + "; falling back to the element's own attributes", e);
-            return attributeOnly(loc);
+            own = attributeOnly(loc);
         }
-        return AnchoredLocatorScript.toSuggestion(result);
+        return own == null ? null : withFramePath(loc, own);
+    }
+
+    /**
+     * Prepends the hops from the top-level document down to the element's own document: for each
+     * ancestor frame, the iframe element's {@code shadow=} hops then {@code frame=<css>}, outside-in.
+     * {@code null} if any step fails, since a suggestion without its frames would not replay.
+     */
+    private static LocatorSuggestion withFramePath(Locator loc, LocatorSuggestion own) {
+        List<ElementHandle> handles = new ArrayList<>();
+        try {
+            ElementHandle element = loc.elementHandle();
+            handles.add(element);
+            Frame frame = element.ownerFrame();
+            if (frame == null) return null; // detached
+            List<String> outer = new ArrayList<>();
+            while (frame.parentFrame() != null) {
+                ElementHandle iframe = frame.frameElement();
+                handles.add(iframe);
+                LocatorSuggestion hop = AnchoredLocatorScript.toSuggestion(
+                        iframe.evaluate(AnchoredLocatorScript.source(), FRAME_OPTS));
+                if (hop == null || !"css".equals(hop.kind())) {
+                    LOG.log(System.Logger.Level.INFO, "No stable CSS for the iframe of " + loc + "; no suggestion");
+                    return null;
+                }
+                List<String> hops = new ArrayList<>(hop.within());
+                hops.add("frame=" + hop.value());
+                outer.addAll(0, hops);
+                frame = frame.parentFrame();
+            }
+            if (outer.isEmpty()) return own;
+            outer.addAll(own.within());
+            return LocatorSuggestion.of(own.kind(), own.value(), outer);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Could not derive the frame path of " + loc + "; no suggestion", e);
+            return null;
+        } finally {
+            for (ElementHandle h : handles) {
+                try {
+                    h.dispose();
+                } catch (RuntimeException ignored) {
+                    // already gone with its frame
+                }
+            }
+        }
     }
 
     /** The unchecked fallback: the element's own attributes, then its text. Package-private for tests. */

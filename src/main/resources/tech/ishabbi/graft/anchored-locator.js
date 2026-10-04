@@ -7,8 +7,12 @@
   // opts.cssOnlyInShadow: skip the text tier inside shadow roots (Selenium's text locator is XPath).
   // opts.pierce: count uniqueness matches in the root plus every OPEN shadow root nested below it,
   //   for engines whose replay pierces shadow DOM (Playwright: true; Selenium: false).
+  // opts.cssOnly: the element's own locator is always kind 'css' (testId / id / name become
+  //   attribute or #id CSS, escaped here with CSS.escape; no text tier). Used for an iframe
+  //   element, whose frame= hop must be CSS.
   opts = opts || {};
   const pierce = !!opts.pierce;
+  const cssOnly = !!opts.cssOnly;
 
   // Attributes usable as tier values / anchors, in priority order.
   const STABLE = ['data-testid', 'data-test', 'id', 'name', 'aria-label'];
@@ -159,8 +163,8 @@
   // Main: the element's own locator, then shadow hops outward to the document.
   let root = el.getRootNode();
   if (!isDocument(root) && !isShadowRoot(root)) return null; // detached
-  const skipText = !!opts.cssOnlyInShadow && isShadowRoot(root);
-  const own = ownTier(el, root, false) || anchoredTier(el, root)
+  const skipText = cssOnly || (!!opts.cssOnlyInShadow && isShadowRoot(root));
+  const own = ownTier(el, root, cssOnly) || anchoredTier(el, root)
     || (skipText ? null : textTier(el, root)) || rootPathTier(el, root);
   if (!own) return null;
 
