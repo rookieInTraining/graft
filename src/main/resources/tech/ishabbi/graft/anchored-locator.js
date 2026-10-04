@@ -5,7 +5,10 @@
   // Tier order: own stable attribute, path from a stable ancestor anchor, unique short text,
   // structural path from the root (:root / shadow top-level child), else null.
   // opts.cssOnlyInShadow: skip the text tier inside shadow roots (Selenium's text locator is XPath).
+  // opts.pierce: count uniqueness matches in the root plus every OPEN shadow root nested below it,
+  //   for engines whose replay pierces shadow DOM (Playwright: true; Selenium: false).
   opts = opts || {};
+  const pierce = !!opts.pierce;
 
   // Attributes usable as tier values / anchors, in priority order.
   const STABLE = ['data-testid', 'data-test', 'id', 'name', 'aria-label'];
@@ -28,11 +31,32 @@
     return v && v.trim() && !NOISY.test(v) ? v : null;
   };
 
-  // True when `css` matches exactly one node in `root`, and that node is `target`.
+  // The roots a uniqueness check searches: `root`, plus (with pierce) its nested open shadow roots.
+  const scopeCache = new Map();
+  const scopesOf = (root) => {
+    if (!pierce) return [root];
+    if (scopeCache.has(root)) return scopeCache.get(root);
+    const scopes = [];
+    const collect = (r) => {
+      scopes.push(r);
+      for (const n of r.querySelectorAll('*')) if (n.shadowRoot) collect(n.shadowRoot); // open roots only
+    };
+    collect(root);
+    scopeCache.set(root, scopes);
+    return scopes;
+  };
+
+  // True when `css` matches exactly one node in the scopes of `root`, and that node is `target`.
   const uniqueIn = (root, css, target) => {
     try {
-      const found = root.querySelectorAll(css);
-      return found.length === 1 && found[0] === target;
+      let found = null;
+      for (const scope of scopesOf(root)) {
+        for (const n of scope.querySelectorAll(css)) {
+          if (found) return false;
+          found = n;
+        }
+      }
+      return found === target;
     } catch (e) {
       return false;
     }
@@ -102,20 +126,25 @@
     return css && uniqueIn(root, css, node) ? { kind: 'css', value: css } : null;
   };
 
-  // Tier 4: short visible text that no other element in `root` has as its own text.
-  const textOf = (node) => (typeof node.innerText === 'string' ? node.innerText.replace(/\s+/g, ' ').trim() : '');
-  const ownsText = (node, text) => textOf(node) === text && !Array.from(node.children).some((c) => textOf(c) === text);
-  // Cheap pre-filter key: textContent needs no layout. Whitespace is dropped and case folded
-  // because innerText differs from textContent in both (block breaks, text-transform).
-  const textKey = (s) => s.replace(/\s+/g, '').toLowerCase();
+  // Tier 4: short DOM text (what getByText / XPath text() match, not rendered innerText).
+  // The value is the element's own text nodes, whitespace-collapsed; exactly one of them may be
+  // non-blank (XPath text() reads only the first), and no descendant element may add text.
+  const ownText = (node) => {
+    const parts = [];
+    for (const c of node.childNodes) if (c.nodeType === 3 && c.data.trim()) parts.push(c.data);
+    return parts.length === 1 ? parts[0].replace(/\s+/g, ' ').trim() : '';
+  };
+  const noChildText = (node) => Array.from(node.children).every((c) => !(c.textContent || '').trim());
+  // Own text is checked first: it reads only direct children, so the subtree scan runs for candidates only.
+  const ownsText = (node, text) => ownText(node) === text && noChildText(node);
   const textTier = (node, root) => {
-    const text = textOf(node);
-    if (!text || text.length > MAX_TEXT || !ownsText(node, text)) return null;
-    const key = textKey(text);
+    const text = ownText(node);
+    if (!text || text.length > MAX_TEXT || !noChildText(node)) return null;
+    // Visibility only: innerText is empty for visibility:hidden content.
+    if (typeof node.innerText !== 'string' || !node.innerText.trim()) return null;
     let owners = 0;
-    for (const n of root.querySelectorAll('*')) {
-      if (!textKey(n.textContent || '').includes(key)) continue; // innerText only for candidates
-      if (ownsText(n, text) && ++owners > 1) return null;
+    for (const scope of scopesOf(root)) {
+      for (const n of scope.querySelectorAll('*')) if (ownsText(n, text) && ++owners > 1) return null;
     }
     return owners === 1 ? { kind: 'text', value: text } : null;
   };

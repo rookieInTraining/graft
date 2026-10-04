@@ -32,6 +32,8 @@ import tech.ishabbi.graft.LocatorSuggestion;
 class AnchoredSuggestionTest {
 
     private static final String TARGET = "[data-graft-probe=t]";
+    private static final Map<String, Object> PLAYWRIGHT_OPTS = Map.of("cssOnlyInShadow", false, "pierce", true);
+    private static final Map<String, Object> SELENIUM_OPTS = Map.of("cssOnlyInShadow", true, "pierce", false);
 
     private static Playwright playwright;
     private static Browser browser;
@@ -177,7 +179,7 @@ class AnchoredSuggestionTest {
                 + "</script>");
         ElementHandle target = page.evaluateHandle("() => window.__target").asElement();
         assertNotNull(target);
-        Object result = target.evaluate(AnchoredLocatorScript.source(), Map.of("cssOnlyInShadow", false));
+        Object result = target.evaluate(AnchoredLocatorScript.source(), PLAYWRIGHT_OPTS);
         assertNull(result);
         assertNull(AnchoredLocatorScript.toSuggestion(result));
     }
@@ -205,10 +207,63 @@ class AnchoredSuggestionTest {
     }
 
     @Test
-    void textTierFindsOwnerDespiteTextTransform() {
+    void textTierUsesDomTextNotRenderedText() {
         LocatorSuggestion s = suggestFor(
                 "<div><p>a</p></div><div><p style='text-transform:uppercase' data-graft-probe='t'>Shout</p></div>");
-        assertSuggestion(s, "text", "SHOUT", List.of());
+        assertSuggestion(s, "text", "Shout", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void textFromDescendantElementsIsNotUsed() {
+        LocatorSuggestion s = suggestFor(
+                "<div><p>a</p></div><div><p data-graft-probe='t'>Hello <b>world</b></p></div>");
+        assertSuggestion(s, "css", ":root > body > div:nth-of-type(2) > p", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void textSplitAcrossLineBreakIsNotUsed() {
+        LocatorSuggestion s = suggestFor("<div><p>a</p></div><div><p data-graft-probe='t'>one<br>two</p></div>");
+        assertSuggestion(s, "css", ":root > body > div:nth-of-type(2) > p", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void hiddenTextIsNotUsed() {
+        LocatorSuggestion s = suggestFor(
+                "<div><p>a</p></div><div><p style='visibility:hidden' data-graft-probe='t'>Ghost</p></div>");
+        assertSuggestion(s, "css", ":root > body > div:nth-of-type(2) > p", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void pierceRejectsIdDuplicatedInsideOpenShadowRoot() {
+        String html = "<button id='dup' name='buy' data-graft-probe='t'>Buy</button><x-host id='h'></x-host>"
+                + shadow("document.getElementById('h')", "open", "<span id=\"dup\">x</span>");
+        LocatorSuggestion s = suggestFor(html);
+        assertSuggestion(s, "name", "buy", List.of());
+        assertResolvesToTarget(s);
+
+        // Without pierce (Selenium), the document-scoped id is unique.
+        Object noPierce = page.locator(TARGET).evaluate(AnchoredLocatorScript.source(), SELENIUM_OPTS);
+        assertSuggestion(AnchoredLocatorScript.toSuggestion(noPierce), "id", "dup", List.of());
+    }
+
+    @Test
+    void pierceRejectsTextDuplicatedInsideOpenShadowRoot() {
+        LocatorSuggestion s = suggestFor("<div><p data-graft-probe='t'>Hi</p></div><x-host id='h'></x-host>"
+                + shadow("document.getElementById('h')", "open", "<span>Hi</span>"));
+        assertSuggestion(s, "css", ":root > body > div > p", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void fallbackEscapesAriaLabel() {
+        page.setContent("<button aria-label='Say \"hi\" \\ now' data-graft-probe='t'>x</button>");
+        LocatorSuggestion s = PlaywrightSuggestedLocator.attributeOnly(page.locator(TARGET));
+        assertSuggestion(s, "css", "[aria-label=\"Say \\\"hi\\\" \\\\ now\"]", List.of());
+        assertResolvesToTarget(s);
     }
 
     @Test
@@ -246,7 +301,7 @@ class AnchoredSuggestionTest {
         assertSuggestion(s, "text", "Hi", List.of("shadow=#panel"));
         assertResolvesToTarget(s);
 
-        Object cssOnly = target.evaluate(AnchoredLocatorScript.source(), Map.of("cssOnlyInShadow", true));
+        Object cssOnly = target.evaluate(AnchoredLocatorScript.source(), SELENIUM_OPTS);
         LocatorSuggestion selenium = AnchoredLocatorScript.toSuggestion(cssOnly);
         assertTrue(selenium == null || !"text".equals(selenium.kind()), String.valueOf(selenium));
     }
@@ -255,7 +310,7 @@ class AnchoredSuggestionTest {
     void cssOnlyInShadowKeepsOwnAttributeTiers() {
         page.setContent("<card-form id='card'></card-form>"
                 + shadow("document.getElementById('card')", "open", "<input name=\"cc\" data-graft-probe=\"t\">"));
-        Object result = page.locator(TARGET).evaluate(AnchoredLocatorScript.source(), Map.of("cssOnlyInShadow", true));
+        Object result = page.locator(TARGET).evaluate(AnchoredLocatorScript.source(), SELENIUM_OPTS);
         assertSuggestion(AnchoredLocatorScript.toSuggestion(result), "name", "cc", List.of("shadow=#card"));
     }
 
