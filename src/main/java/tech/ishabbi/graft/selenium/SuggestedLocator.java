@@ -36,18 +36,9 @@ final class SuggestedLocator {
     }
 
     /**
-     * The full suggestion for an element: on the web, its in-document locator with the frame hops
-     * of {@link FramePath#hopsFor} prepended. The driver must be in the element's frame.
-     */
-    static LocatorSuggestion suggest(WebDriver driver, WebElement el, Framework framework) {
-        if (framework == Framework.APPIUM) return suggestMobile(driver, el);
-        LocatorSuggestion inDocument = suggestWeb(driver, el);
-        return inDocument == null ? null : withFrames(inDocument, FramePath.hopsFor(driver, el));
-    }
-
-    /**
-     * As {@link #suggest(WebDriver, WebElement, Framework)}, with the frame hops already known
-     * ({@code null}: the frame path is unusable, so nothing is suggested).
+     * The full suggestion for an element: on the web, its in-document locator with {@code frameHops}
+     * (from {@link FramePath#hopsFor}) prepended; {@code null} hops mean the frame path is unusable,
+     * so nothing is suggested. The driver must be in the element's frame.
      */
     static LocatorSuggestion suggest(WebDriver driver, WebElement el, Framework framework, List<String> frameHops) {
         if (framework == Framework.APPIUM) return suggestMobile(driver, el);

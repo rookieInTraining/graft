@@ -36,9 +36,9 @@ class SuggestedLocatorTest {
                 });
         List<LogRecord> logged = warnings(() -> {
             assertEquals(LocatorSuggestion.of("css", "[data-test=\"it's \\\"q\\\"\"]"),
-                    SuggestedLocator.suggest(noJs, el().attr("data-test", "it's \"q\""), Framework.SELENIUM));
+                    SuggestedLocator.suggest(noJs, el().attr("data-test", "it's \"q\""), Framework.SELENIUM, List.of()));
             assertEquals(LocatorSuggestion.of("css", "[aria-label=\"a\\\\b\"]"),
-                    SuggestedLocator.suggest(noJs, el().attr("aria-label", "a\\b"), Framework.SELENIUM));
+                    SuggestedLocator.suggest(noJs, el().attr("aria-label", "a\\b"), Framework.SELENIUM, List.of()));
         });
         assertEquals(List.of(), logged);
     }
@@ -50,12 +50,12 @@ class SuggestedLocatorTest {
             return Map.of("within", List.of("shadow=#host"), "kind", "css", "value", "div > button");
         });
         assertEquals(LocatorSuggestion.of("css", "div > button", List.of("shadow=#host")),
-                SuggestedLocator.suggest(driver, el().attr("id", "ignored"), Framework.SELENIUM));
+                SuggestedLocator.suggest(driver, el().attr("id", "ignored"), Framework.SELENIUM, List.of()));
     }
 
-    /** The anchored script answers {@code anchored}; the frame check says "top-level document". */
+    /** The anchored script answers {@code anchored}. */
     private void scripts(Function<String, Object> anchored) {
-        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : anchored.apply(script);
+        driver.js = anchored;
     }
 
     /** Runs {@code r} and returns the WARNING records {@link SuggestedLocator} logged. */
@@ -82,7 +82,7 @@ class SuggestedLocatorTest {
     void nullScriptResultMeansNoSuggestionAndNoWarning() {
         scripts(script -> null);
         List<LogRecord> logged = warnings(() -> assertNull(
-                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM)));
+                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM, List.of())));
         assertEquals(List.of(), logged);
     }
 
@@ -90,7 +90,7 @@ class SuggestedLocatorTest {
     void malformedScriptResultWarnsOnOneLineWithoutAStackTrace() {
         scripts(script -> Boolean.TRUE);
         List<LogRecord> logged = warnings(() -> assertEquals(LocatorSuggestion.of("id", "save"),
-                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM)));
+                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM, List.of())));
         assertEquals(1, logged.size());
         assertNull(logged.get(0).getThrown());
         assertTrue(logged.get(0).getMessage().contains("true"), logged.get(0).getMessage());
@@ -100,7 +100,7 @@ class SuggestedLocatorTest {
     void scriptExceptionWarnsWithItsStackTrace() {
         scripts(script -> { throw new IllegalStateException("boom"); });
         List<LogRecord> logged = warnings(() -> assertEquals(LocatorSuggestion.of("id", "save"),
-                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM)));
+                SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM, List.of())));
         assertEquals(1, logged.size());
         assertNotNull(logged.get(0).getThrown());
     }
@@ -164,7 +164,7 @@ class SuggestedLocatorTest {
     void appiumKeepsTheMobileSuggestion() {
         driver.js = script -> { throw new AssertionError("no script for native Appium"); };
         assertEquals(LocatorSuggestion.of("accessibilityId", "go"),
-                SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM));
+                SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM, List.of()));
     }
 
     @Test
@@ -174,7 +174,7 @@ class SuggestedLocatorTest {
                 .rect(new org.openqa.selenium.Rectangle(500, 900, 100, 580));
         assertEquals(LocatorSuggestion.of("xpath",
                         "//*[@resource-id='com.app:id/list']/android.view.ViewGroup[2]/android.widget.Button"),
-                SuggestedLocator.suggest(driver, buy, Framework.APPIUM));
+                SuggestedLocator.suggest(driver, buy, Framework.APPIUM, List.of()));
     }
 
     @Test
@@ -182,20 +182,20 @@ class SuggestedLocatorTest {
         driver.pageSource = () -> NativeAnchoredLocatorTest.ANDROID_BARE;
         RecordingStubs.Element ok = el().attr("text", "OK").attr("className", "android.widget.Button")
                 .rect(new org.openqa.selenium.Rectangle(0, 200, 100, 500));
-        assertNull(SuggestedLocator.suggest(driver, ok, Framework.APPIUM));
+        assertNull(SuggestedLocator.suggest(driver, ok, Framework.APPIUM, List.of()));
     }
 
     @Test
     void appiumFallsBackToAttributesWhenThePageSourceCannotBeRead() {
         driver.pageSource = () -> { throw new IllegalStateException("flaky"); };
         assertEquals(LocatorSuggestion.of("accessibilityId", "go"),
-                SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM));
+                SuggestedLocator.suggest(driver, el().attr("content-desc", "go"), Framework.APPIUM, List.of()));
     }
 
     @Test
     void appiumFallsBackToAttributesWhenTheTargetIsNotInThePageSource() {
         driver.pageSource = () -> NativeAnchoredLocatorTest.ANDROID;
         assertEquals(LocatorSuggestion.of("text", "elsewhere"),
-                SuggestedLocator.suggest(driver, el().attr("text", "elsewhere"), Framework.APPIUM));
+                SuggestedLocator.suggest(driver, el().attr("text", "elsewhere"), Framework.APPIUM, List.of()));
     }
 }
