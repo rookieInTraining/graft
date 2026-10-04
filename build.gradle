@@ -49,6 +49,24 @@ test {
     useJUnitPlatform()
 }
 
+def cacheServerJedis = configurations.detachedConfiguration(
+    dependencies.create('redis.clients:jedis:5.2.0')
+)
+
+tasks.register('cacheServer', JavaExec) {
+    group = 'application'
+    description = 'Start the learned-locator cache server. Uses REDIS_URL, or redis://127.0.0.1:6379.'
+    classpath = sourceSets.main.runtimeClasspath + cacheServerJedis
+    mainClass = 'tech.ishabbi.graft.cache.CacheServer'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    def redisUrl = providers.environmentVariable('REDIS_URL').orElse('redis://127.0.0.1:6379')
+    doFirst {
+        environment 'REDIS_URL', redisUrl.get()
+    }
+}
+
 publishing {
     publications {
         maven(MavenPublication) {

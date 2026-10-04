@@ -59,7 +59,7 @@ final class SuggestedLocator {
     private static String attr(WebElement el, String... names) {
         for (String name : names) {
             try {
-                String v = el.getAttribute(name);
+                String v = el.getDomAttribute(name);
                 if (v != null && !v.isBlank()) return v;
             } catch (RuntimeException ignored) {
                 // driver does not support the attribute

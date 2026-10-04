@@ -95,24 +95,11 @@ classpath.
 
 ```bash
 docker run -d --name graft-redis -p 6379:6379 redis:7
+gradle cacheServer
 ```
 
-Windows:
-
-```powershell
-$env:REDIS_URL = "redis://127.0.0.1:6379"
-java -cp "build\libs\graft-0.1.0-SNAPSHOT.jar;jedis-5.2.0.jar" tech.ishabbi.graft.cache.CacheServer
-```
-
-macOS and Linux:
-
-```bash
-REDIS_URL=redis://127.0.0.1:6379 \
-  java -cp build/libs/graft-0.1.0-SNAPSHOT.jar:jedis-5.2.0.jar \
-  tech.ishabbi.graft.cache.CacheServer
-```
-
-`REDIS_URL` is required. `GRAFT_CACHE_PORT` defaults to `8741`. `GRAFT_CACHE_TOKEN`, when set,
+`gradle cacheServer` puts Jedis on the classpath and listens on port `8741`. `REDIS_URL` defaults
+to `redis://127.0.0.1:6379`. `GRAFT_CACHE_PORT` defaults to `8741`. `GRAFT_CACHE_TOKEN`, when set,
 requires `Authorization: Bearer` on `/v1`. `GET /health` pings Redis and does not require the token.
 
 On the test JVM:
@@ -305,8 +292,8 @@ dependencies {
 }
 ```
 
-Running `CacheServer` also needs `jedis-5.2.0.jar` on that process's classpath. It is not a
-transitive dependency of `graft`.
+`gradle cacheServer` in this repo starts that process and adds Jedis itself. Jedis is not a
+transitive dependency of the published `graft` jar.
 
 Configure an AI provider exactly as for Alumnium (`OPENAI_API_KEY`, `ALUMNIUM_MODEL=anthropic`,
 Ollama, …). Alumnium's element cache applies to healed finds, so repeated runs with an unchanged
