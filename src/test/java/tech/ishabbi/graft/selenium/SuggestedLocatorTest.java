@@ -69,9 +69,9 @@ class SuggestedLocatorTest {
     }
 
     @Test
-    void nullScriptResultFallsBackToAttributesWithoutAWarning() {
+    void nullScriptResultMeansNoSuggestionAndNoWarning() {
         scripts(script -> null);
-        List<LogRecord> logged = warnings(() -> assertEquals(LocatorSuggestion.of("id", "save"),
+        List<LogRecord> logged = warnings(() -> assertNull(
                 SuggestedLocator.suggest(driver, el().attr("id", "save"), Framework.SELENIUM)));
         assertEquals(List.of(), logged);
     }

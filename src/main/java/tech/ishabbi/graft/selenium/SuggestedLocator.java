@@ -65,8 +65,9 @@ final class SuggestedLocator {
      * locator plus the {@code shadow=} hops of the open shadow roots the element sits in, within its
      * own document. Selenium CSS does not pierce shadow roots ({@code pierce:false}) and a shadow
      * root takes only CSS ({@code cssOnlyInShadow:true}). Falls back to {@link #suggestByAttributes}
-     * when the driver cannot run JS, the script throws (WARNING with the stack trace), returns a
-     * malformed result (one-line WARNING) or returns {@code null} (nothing unique; no warning).
+     * when the driver cannot run JS, the script throws (WARNING with the stack trace) or returns a
+     * malformed result (one-line WARNING). A {@code null} result means nothing is unique: no
+     * suggestion, and no warning.
      */
     private static LocatorSuggestion suggestWeb(WebDriver driver, WebElement el) {
         WebDriver d = DriverRegistry.unwrapDriver(driver);
@@ -75,12 +76,11 @@ final class SuggestedLocator {
             try {
                 Object result = js.executeScript("return (" + AnchoredLocatorScript.source() + ")(arguments[0], arguments[1]);",
                         SeleniumHealer.unwrap(el), SCRIPT_OPTIONS);
-                if (result != null) {
-                    LocatorSuggestion s = AnchoredLocatorScript.toSuggestion(result);
-                    if (s != null) return s;
-                    LOG.log(System.Logger.Level.WARNING, "Anchored locator script returned an unexpected result ("
-                            + abbreviate(String.valueOf(result)) + "); falling back to attribute-only suggestion");
-                }
+                if (result == null) return null;   // nothing unique: no suggestion, nothing learned
+                LocatorSuggestion s = AnchoredLocatorScript.toSuggestion(result);
+                if (s != null) return s;
+                LOG.log(System.Logger.Level.WARNING, "Anchored locator script returned an unexpected result ("
+                        + abbreviate(String.valueOf(result)) + "); falling back to attribute-only suggestion");
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING,
                         "Anchored locator script failed; falling back to attribute-only suggestion", e);

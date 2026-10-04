@@ -86,9 +86,18 @@ class HealingByTest {
             WebElement e = elements.get(by.toString());
             return e == null ? List.of() : List.of(e);
         }
-        /** The anchored-locator script finds nothing unique (null); every other script answers {@link #jsContains}. */
+        /**
+         * The anchored-locator script answers like the real one for a top-level stub element (its
+         * data-testid, else its id, else nothing unique); every other script answers {@link #jsContains}.
+         */
         @Override public Object executeScript(String script, Object... args) {
-            return script.contains(AnchoredLocatorScript.source()) ? null : jsContains;
+            if (!script.contains(AnchoredLocatorScript.source())) return jsContains;
+            StubElement el = (StubElement) args[0];
+            if (el.attrs.containsKey("data-testid")) {
+                return Map.of("within", List.of(), "kind", "testId", "value", el.attrs.get("data-testid"));
+            }
+            if (el.attrs.containsKey("id")) return Map.of("within", List.of(), "kind", "id", "value", el.attrs.get("id"));
+            return null;
         }
         @Override public Object executeAsyncScript(String script, Object... args) { return null; }
         @Override public void get(String url) {}
