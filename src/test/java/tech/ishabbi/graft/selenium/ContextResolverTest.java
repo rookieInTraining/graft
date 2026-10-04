@@ -219,6 +219,28 @@ class ContextResolverTest {
     }
 
     @Test
+    void aLearnedMissInsideAFrameReturnsToTheTestsFrameBeforeAlumnium() {
+        driver.put("top", By.cssSelector("#pay"), el("pay"));   // the frame is there, the element is not
+        RecordingStubs.Element found = el("found");
+        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : null;
+        HealingBy save = HealingBy.of(By.id("old-save"), "the save button").proxied();
+        MemoryLocatorStore store = new MemoryLocatorStore();
+        store.learn(save.key(), LocatorSuggestion.of("testId", "save", List.of("frame=#pay")), "here", "SELENIUM");
+        List<String> framesSeen = new ArrayList<>();
+        HealingConfig config = HealingConfig.builder().reportPath(null).learnedStore(store)
+                .locatorTimeout(Duration.ZERO).pollInterval(Duration.ofMillis(1)).build();
+        open.add(SeleniumHealer.withFinder(driver, d -> {
+            framesSeen.add(driver.frame);
+            return found;
+        }, config));
+
+        driver.findElement(save).click();
+
+        assertTrue(log.contains("frame(pay)"), "the learned locator was tried inside the frame: " + log);
+        assertEquals(List.of("top"), framesSeen, "Alumnium must not inherit the learned locator's frame");
+    }
+
+    @Test
     void learnedTextInsideAShadowRootIsAMiss() {
         RecordingStubs.Element host = el("host");
         host.attachShadow();

@@ -253,7 +253,7 @@ public final class SeleniumHealer extends AbstractHealer {
         Located found;
         try {
             found = primary == null ? describeOnly(spec, context, lost)
-                    : healWithAlumnium(spec, primary, context, cause, lost);
+                    : healWithAlumnium(spec, primary, context, cause, lost, before);
         } catch (RuntimeException e) {
             before.restore();
             throw e;
@@ -331,12 +331,13 @@ public final class SeleniumHealer extends AbstractHealer {
         return locatedByAlumnium(el, frameHops(el), lost);
     }
 
+    /** {@code before} is the test's frame state, restored after a learned miss so Alumnium starts there. */
     private Located healWithAlumnium(LocatorSpec spec, By primary, SearchContext context, Throwable cause,
-                                     boolean[] lost) {
+                                     boolean[] lost, FrameState before) {
         List<List<String>> hops = new ArrayList<>(1);   // the frame hops of what Alumnium found
         try {
             return heal(spec, primary.toString(), cause,
-                    suggestion -> tryLearned(spec, suggestion, context),
+                    suggestion -> learnedOrRestore(spec, suggestion, context, before),
                     () -> {
                         WebElement el = findWithAlumnium(spec);
                         requireInScope(spec, el, context, cause);
@@ -380,6 +381,21 @@ public final class SeleniumHealer extends AbstractHealer {
         if (found instanceof WebElement we) return we;
         throw new IllegalStateException("AI finder returned " + (found == null ? "null" : found.getClass().getName())
                 + " for a " + framework + " driver; expected WebElement");
+    }
+
+    /**
+     * {@link #tryLearned}; on a miss (or a failure) with frame hops, the driver may be left inside the
+     * learned entry's frame, so the test's frame ({@code before}) is restored before Alumnium runs.
+     */
+    private Located learnedOrRestore(LocatorSpec spec, LocatorSuggestion suggestion, SearchContext context,
+                                     FrameState before) {
+        Located found = null;
+        try {
+            found = tryLearned(spec, suggestion, context);
+            return found;
+        } finally {
+            if (found == null && !suggestion.within().isEmpty()) before.restore();
+        }
     }
 
     /**
