@@ -3,6 +3,7 @@ package tech.ishabbi.graft;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -17,6 +18,9 @@ class ElementSpecTest {
         @Element(value = "Bad", id = "a", css = "b") Object twoLocators;
         @Element("   ") Object blank;
         @Element(value = "Slow one", xpath = "//x", timeoutMs = 250, heal = false) Object tuned;
+        @Element(value = "Pay", css = "button", within = {"frame=#pay", "shadow=card"}) Object inFrame;
+        @Element(value = "Pay", within = "frame=#pay") Object withinNoLocator;
+        @Element(value = "Pay", css = "button", within = "iframe=#pay") Object badHop;
     }
 
     private static ElementSpec spec(String field) throws NoSuchFieldException {
@@ -56,5 +60,27 @@ class ElementSpecTest {
         assertFalse(s.healEnabled());
         assertEquals(Duration.ofMillis(250), s.locatorTimeout(HealingConfig.defaults()));
         assertEquals(HealingConfig.defaults().locatorTimeout(), spec("inline").locatorTimeout(HealingConfig.defaults()));
+    }
+
+    @Test
+    void parsesWithin() throws Exception {
+        assertEquals(List.of(), spec("inline").within());
+        List<Within.Hop> hops = spec("inFrame").within();
+        assertEquals(List.of("frame=#pay", "shadow=card"), Within.formatAll(hops));
+        assertEquals(Page.class.getName() + "#inFrame", spec("inFrame").key());
+    }
+
+    @Test
+    void rejectsWithinWithoutALocator() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> spec("withinNoLocator"));
+        assertTrue(e.getMessage().contains("Page.withinNoLocator"));
+        assertTrue(e.getMessage().contains("within requires a locator attribute"));
+    }
+
+    @Test
+    void rejectsInvalidHopNamingTheField() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> spec("badHop"));
+        assertTrue(e.getMessage().contains("Page.badHop"));
+        assertTrue(e.getMessage().contains("iframe=#pay"));
     }
 }

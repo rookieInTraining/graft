@@ -1,6 +1,7 @@
 package tech.ishabbi.graft;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -30,8 +31,10 @@ public final class HealingSelector implements LocatorSpec {
     private final boolean heal;
     private final long timeoutMs;
     private final String origin;
+    private final List<Within.Hop> within;
 
-    private HealingSelector(Object primary, String description, boolean heal, long timeoutMs, String origin) {
+    private HealingSelector(Object primary, String description, boolean heal, long timeoutMs, String origin,
+                            List<Within.Hop> within) {
         if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("HealingSelector needs a non-blank description");
         }
@@ -40,19 +43,27 @@ public final class HealingSelector implements LocatorSpec {
         this.heal = heal;
         this.timeoutMs = timeoutMs;
         this.origin = origin;
+        this.within = within;
     }
 
     public static HealingSelector of(Object primary, String description) {
-        return new HealingSelector(primary, description, true, -1, CallSite.capture());
+        return new HealingSelector(primary, description, true, -1, CallSite.capture(), List.of());
     }
 
     public static HealingSelector describe(String description) {
-        return new HealingSelector(null, description, true, -1, CallSite.capture());
+        return new HealingSelector(null, description, true, -1, CallSite.capture(), List.of());
     }
 
-    public HealingSelector heal(boolean heal) { return new HealingSelector(primary, description, heal, timeoutMs, origin); }
+    public HealingSelector heal(boolean heal) { return new HealingSelector(primary, description, heal, timeoutMs, origin, within); }
 
-    public HealingSelector timeout(Duration d) { return new HealingSelector(primary, description, heal, d.toMillis(), origin); }
+    public HealingSelector timeout(Duration d) { return new HealingSelector(primary, description, heal, d.toMillis(), origin, within); }
+
+    /** Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}. */
+    public HealingSelector within(String... hops) {
+        return new HealingSelector(primary, description, heal, timeoutMs, origin, Within.parseAll(hops));
+    }
+
+    public List<Within.Hop> within() { return within; }
 
     public Object primary() { return primary; }
 
@@ -68,7 +79,10 @@ public final class HealingSelector implements LocatorSpec {
         return type.cast(primary);
     }
 
-    @Override public String key() { return "selector:" + primaryText() + "|" + description; }
+    @Override public String key() {
+        return "selector:" + primaryText() + "|" + description
+                + (within.isEmpty() ? "" : "|within=" + String.join(" > ", Within.formatAll(within)));
+    }
 
     @Override public String description() { return description; }
 

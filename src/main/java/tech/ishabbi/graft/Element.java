@@ -78,6 +78,16 @@ public @interface Element {
     /** Appium iOS NSPredicate. */
     String iosPredicate() default "";
 
+    // ---- context -----------------------------------------------------------------------
+
+    /**
+     * Context chain the locator lives in, resolved outside-in before the element's own locator:
+     * {@code "frame=<css>"} enters an iframe, {@code "shadow=<css>"} enters an open shadow root.
+     * Each hop's CSS is resolved in the scope left by the previous one. Requires a locator
+     * attribute. Empty means the current search context, no switching.
+     */
+    String[] within() default {};
+
     // ---- behaviour --------------------------------------------------------------------
 
     /** Set to {@code false} to make this element fail fast without consulting Alumnium. */

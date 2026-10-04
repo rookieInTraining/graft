@@ -3,6 +3,7 @@ package tech.ishabbi.graft;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -26,14 +27,16 @@ public final class ElementSpec implements LocatorSpec {
     private final Element annotation;
     private final LocatorKind locatorKind;   // null when @Element carries no locator
     private final String locatorValue;
+    private final List<Within.Hop> within;
 
     private ElementSpec(Class<?> pageClass, Field field, Element annotation,
-                        LocatorKind locatorKind, String locatorValue) {
+                        LocatorKind locatorKind, String locatorValue, List<Within.Hop> within) {
         this.pageClass = pageClass;
         this.field = field;
         this.annotation = annotation;
         this.locatorKind = locatorKind;
         this.locatorValue = locatorValue;
+        this.within = within;
     }
 
     public static ElementSpec of(Class<?> pageClass, Field field) {
@@ -62,10 +65,20 @@ public final class ElementSpec implements LocatorSpec {
                     + " sets more than one locator attribute: " + set.keySet()
                     + ". Use exactly one, or none and rely on @FindBy / Alumnium.");
         }
+        List<Within.Hop> within;
+        try {
+            within = Within.parseAll(annotation.within());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("@Element on " + describe(pageClass, field) + ": " + e.getMessage(), e);
+        }
+        if (!within.isEmpty() && set.isEmpty()) {
+            throw new IllegalArgumentException("@Element on " + describe(pageClass, field)
+                    + ": within requires a locator attribute (id, css, ...)");
+        }
         Map.Entry<LocatorKind, String> only = set.isEmpty() ? null : set.entrySet().iterator().next();
         return new ElementSpec(pageClass, field, annotation,
                 only == null ? null : only.getKey(),
-                only == null ? null : only.getValue());
+                only == null ? null : only.getValue(), within);
     }
 
     private static void put(Map<LocatorKind, String> map, LocatorKind kind, String value) {
@@ -94,6 +107,9 @@ public final class ElementSpec implements LocatorSpec {
     public Optional<LocatorKind> locatorKind() { return Optional.ofNullable(locatorKind); }
 
     public String locatorValue() { return locatorValue; }
+
+    /** Context chain (iframes / shadow roots) the locator is resolved in, outside-in; empty for top level. */
+    public List<Within.Hop> within() { return within; }
 
     public boolean hasInlineLocator() { return locatorKind != null; }
 

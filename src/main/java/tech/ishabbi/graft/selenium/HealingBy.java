@@ -2,6 +2,7 @@ package tech.ishabbi.graft.selenium;
 
 import tech.ishabbi.graft.HealingConfig;
 import tech.ishabbi.graft.LocatorSpec;
+import tech.ishabbi.graft.Within;
 import org.openqa.selenium.By;
 import org.openqa.selenium.SearchContext;
 import org.openqa.selenium.WebElement;
@@ -43,8 +44,10 @@ public final class HealingBy extends By implements LocatorSpec {
     private final long timeoutMs;
     private final boolean proxied;
     private final String origin;
+    private final List<Within.Hop> within;
 
-    private HealingBy(By primary, String description, boolean heal, long timeoutMs, boolean proxied, String origin) {
+    private HealingBy(By primary, String description, boolean heal, long timeoutMs, boolean proxied, String origin,
+                      List<Within.Hop> within) {
         this.primary = Objects.requireNonNull(primary, "primary");
         if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("HealingBy needs a non-blank description for " + primary);
@@ -54,20 +57,28 @@ public final class HealingBy extends By implements LocatorSpec {
         this.timeoutMs = timeoutMs;
         this.proxied = proxied;
         this.origin = origin;
+        this.within = within;
     }
 
     public static HealingBy of(By primary, String description) {
-        return new HealingBy(primary, description, true, -1, false, tech.ishabbi.graft.CallSite.capture());
+        return new HealingBy(primary, description, true, -1, false, tech.ishabbi.graft.CallSite.capture(), List.of());
     }
 
-    public HealingBy timeout(Duration d) { return new HealingBy(primary, description, heal, d.toMillis(), proxied, origin); }
+    public HealingBy timeout(Duration d) { return new HealingBy(primary, description, heal, d.toMillis(), proxied, origin, within); }
 
-    public HealingBy heal(boolean heal) { return new HealingBy(primary, description, heal, timeoutMs, proxied, origin); }
+    /** Resolve inside iframes / shadow roots, outside-in: {@code "frame=<css>"}, {@code "shadow=<css>"}. */
+    public HealingBy within(String... hops) {
+        return new HealingBy(primary, description, heal, timeoutMs, proxied, origin, Within.parseAll(hops));
+    }
+
+    public HealingBy heal(boolean heal) { return new HealingBy(primary, description, heal, timeoutMs, proxied, origin, within); }
 
     /** Return a self-healing proxy instead of the raw element (stale-reference recovery, re-heal). */
-    public HealingBy proxied() { return new HealingBy(primary, description, heal, timeoutMs, true, origin); }
+    public HealingBy proxied() { return new HealingBy(primary, description, heal, timeoutMs, true, origin, within); }
 
     public By primary() { return primary; }
+
+    public List<Within.Hop> within() { return within; }
 
     // ---- By ------------------------------------------------------------------------------
 
@@ -90,7 +101,10 @@ public final class HealingBy extends By implements LocatorSpec {
 
     // ---- LocatorSpec ---------------------------------------------------------------------
 
-    @Override public String key() { return "by:" + primary + "|" + description; }
+    @Override public String key() {
+        return "by:" + primary + "|" + description
+                + (within.isEmpty() ? "" : "|within=" + String.join(" > ", Within.formatAll(within)));
+    }
 
     @Override public String description() { return description; }
 
