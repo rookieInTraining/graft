@@ -84,6 +84,15 @@ Next time: primary → **learned** → Alumnium. A broken locator costs one LLM 
 of per run. The store is also the list of locators still waiting for a fix in source. An entry is
 removed when that learned locator stops matching.
 
+A learned locator keeps the context it was found in. When the element sits in an iframe or an open
+shadow root, the entry carries the `within` hops (see below) and replay re-enters them, so a heal
+learned inside a same- or cross-origin iframe replays there. Entries without `within` behave as
+before.
+
+**Rollout:** upgrade `CacheServer` before the test clients. An old server drops `within` on `PUT`,
+and an old client replays a `within` entry in the current context, where it either misses (the entry
+is then evicted) or hits the wrong element.
+
 The default store is `.graft/learned-locators.json` in the process working directory, written on
 each heal. `GRAFT_LEARNED` moves the file. `GRAFT_LEARNED=none` turns the file off. The heal
 report (`.graft/heal-report.json`) is a different file, still local, written when the JVM exits.
@@ -121,7 +130,7 @@ Redis keys are `graft:{namespace}:{locatorKey}`.
 | Method | Path | Result |
 |--------|------|--------|
 | `GET` | `/v1/namespaces/{ns}/entries/{key}` | `200` entry, or `404` |
-| `PUT` | `/v1/namespaces/{ns}/entries/{key}` | stores `{kind, value, origin, framework}`; server sets `learnedAt` |
+| `PUT` | `/v1/namespaces/{ns}/entries/{key}` | stores `{kind, value, within?, origin, framework}`; `within` is an optional string array; server sets `learnedAt` |
 | `DELETE` | `/v1/namespaces/{ns}/entries/{key}?ifLearnedAt={ts}` | `204` removed, `409` a newer row was kept, `400` missing timestamp |
 | `GET` | `/v1/namespaces/{ns}/entries` | every entry in the namespace |
 | `GET` | `/health` | `200` if Redis answers, `503` if it does not |
@@ -174,7 +183,7 @@ vendor endpoint on the node). The wrapper adds no further requirement.
 |-------------|------------------|------------------------------------------------|-----------------------------------------------------|-----------------------------------|
 | Selenium    | `WebElement`     | `@Element` locator or `@FindBy/@FindBys/@FindAll` | `NoSuchElementException`, `InvalidSelectorException` | `Alumni.find` → `WebElement`      |
 | Appium      | `WebElement`     | + `@AndroidFindBy`/`@iOSXCUITFindBy`, `AppiumBy` kinds | same                                           | `Alumni.find` → `WebElement`      |
-| Playwright  | `Locator`        | `@Element` locator → `page.locator/getByTestId/getByText` | `TimeoutError` on attach-wait, or on an action **when the locator matches 0 nodes** | `Alumni.find` → `Locator` |
+| Playwright  | `Locator`        | `@Element` locator → `page.locator/getByTestId/getByText`; with `within`, the same calls on the scope (`frameLocator(css)` / host `locator(css)`) | `TimeoutError` on attach-wait, or on an action **when the locator matches 0 nodes** | `Alumni.find` → `Locator` |
 | Maestro     | `MaestroElement` | one-command flow via `maestro test`            | output contains "Element not found"                 | Alumnium MCP `do("<action> the <description>")` |
 
 ### Locator attributes on `@Element`
@@ -194,8 +203,39 @@ neither, the element is description-only (Alumnium is the primary locator).
 | `androidUIAutomator` | —                              | `AppiumBy.androidUIAutomator`            | —                   | —       |
 | `iosClassChain`      | —                              | `AppiumBy.iOSClassChain`                 | —                   | —       |
 | `iosPredicate`       | —                              | `AppiumBy.iOSNsPredicateString`          | —                   | —       |
+| `within`             | frame / shadow chain           | —                                        | frame / shadow chain | —      |
+
+`within` is a modifier, not a locator: it goes next to one of the attributes above.
 
 Per-element overrides: `heal = false` (fail fast), `timeoutMs = 500` (shorter/longer locator wait).
+
+#### Locators inside iframes and shadow roots (`within`)
+
+```java
+@Element(value = "the card number field", within = {"frame=#checkout", "shadow=pay-widget"}, css = "input.card")
+WebElement cardNumber;
+
+static final By PAY = HealingBy.of(By.cssSelector("button.pay"), "the Pay button").within("frame=#checkout").proxied();
+static final HealingSelector CARD = HealingSelector.of("input.card", "the card number").within("frame=#checkout");
+```
+
+- Hops are outside-in. `frame=<css>` enters the iframe matched by `<css>`; `shadow=<css>` enters the
+  open shadow root of the host matched by `<css>`. Each hop's CSS is resolved in the scope left by
+  the previous one. Everything after the first `=` is the CSS, so `frame=iframe[name='pay']` is fine.
+- An empty `within` is today's behaviour: no switching, the current search context.
+- A non-empty `within` resolves from the top-level document when the search context is the driver or
+  the page, and relative to the element or shadow root when the search context is a scoped one
+  (`parent.findElement(by)`).
+- Selenium: `HealingBy.of(...).within(...)`. Playwright: `HealingSelector.of(...).within(...)`.
+- `within` is part of the locator's key, so the same selector in two contexts learns separately.
+
+Restrictions, all rejected with `IllegalArgumentException`:
+
+- `within` needs an inline `@Element` locator attribute. `@FindBy` plus `within` is rejected in v1,
+  and so is `within` with no locator.
+- A description-only `HealingSelector` with `within` is rejected: Alumnium finds it wherever it is.
+- Selenium supports only CSS inside a shadow root. When the chain ends in a shadow hop, `xpath` and
+  `text` locators are rejected. Playwright rejects `xpath` after any shadow hop.
 
 ## Heal policy (`HealingConfig`)
 
@@ -240,6 +280,7 @@ re-resolves (quick retry of the primary, then Alumnium again, counting against t
     "suggestedLocator": "@Element(testId = \"login-submit-btn\")",
     "suggestionKind": "testId",
     "suggestionValue": "login-submit-btn",
+    "suggestionWithin": ["frame=#login"],
     "durationMs": 1840,
     "at": "2026-10-01T09:12:44.102Z"
   }],
@@ -248,8 +289,27 @@ re-resolves (quick retry of the primary, then Alumnium again, counting against t
 }
 ```
 
-Suggestion preference order is what survives UI churn best: `data-testid` → `id` →
-`resource-id`/`content-desc`/accessibility id → `name`/`aria-label` → visible text.
+`suggestionWithin` is written only when the suggestion has hops (the element sits in an iframe or an
+open shadow root); the `suggestedLocator` annotation then carries the matching `within = {...}`.
+
+Suggestions come from one in-page script shared by Selenium and Playwright. The preference order is
+what survives UI churn best, and every candidate is verified to match exactly this element. On the
+web:
+
+1. `data-testid`
+2. `data-test`
+3. `id`
+4. `name`
+5. `aria-label`
+6. a path from the nearest ancestor that has one of those attributes
+7. the element's own visible text, up to 60 characters
+8. a structural path from the document root
+
+Generated-looking ids and values (React/Ember/MUI ids, long digit runs) are skipped, and `class` is
+never used. Playwright's uniqueness check counts open shadow roots, matching how its locators pierce
+them. On native mobile (Appium) the order is `resource-id`/`content-desc` (Android) or `name` (iOS),
+then an XPath anchored on the nearest ancestor with one of those, then `text`/`label`; each is checked
+against the page source.
 
 Hook your own sink with `HealingConfig.builder().addListener(...)` (Allure step, ReportPortal,
 a bot that opens a locator-fix PR).
@@ -311,8 +371,25 @@ For Maestro: Maestro CLI on `PATH` (or `MAESTRO_BINARY`), Alumnium binary on `PA
   "covered"/"disabled" timeouts surface unchanged by design.
 - Maestro: one `maestro test` per step; `scrollUntilVisible`, `swipe`, etc. not wrapped yet.
 - `HealingBy` keeps the raw-element contract, so stale-reference recovery needs `.proxied()`.
+- A raw `HealingBy.findElement` of iframe content leaves the driver switched into that frame, because
+  the element is only usable there. Use `.proxied()`: it enters the element's frame for each call and
+  restores the test's frame afterwards. Children found through such a proxy
+  (`proxy.findElement/findElements`) are frame-aware proxies too, not raw driver elements, so
+  identity and `equals` against raw elements do not hold.
+- Selenium finds a frame by walking the frame tree: at most 6 levels deep and 64 frames. If Graft
+  cannot work out the iframe path of an element Alumnium healed (frame unreachable or caps
+  exceeded), no frame hops are learned and the driver is left in the frame Alumnium switched to.
+  During frame discovery Graft briefly stamps `data-graft-probe` / `data-graft-frame-<nonce>`
+  attributes on the page; they are removed again, except when a frame cannot be reached afterwards.
+- Closed shadow roots cannot be re-entered: the heal works, but nothing is learned.
+- Appium webview contexts are not handled; native suggestions use the native page source only.
+- Playwright `xpath` locators cannot be used under a shadow hop, and `@FindBy` with `within` is not
+  supported (see `within` above).
 - The default learned store is one JSON file per runner. Set `GRAFT_LEARNED_URL` to share heals
   through `CacheServer`. The heal report stays on the local disk.
+- Real-browser tests (iframes, shadow roots, suggestions) run only with `GRAFT_BROWSER=true` and need
+  Chrome for Selenium and Playwright's browser. `gradle test` without it is hermetic. The
+  `GRAFT_E2E=true` examples additionally need an AI provider (and an emulator for Appium/Maestro).
 - Not compiled against the real jars in the authoring sandbox (no Maven access there) — expect
   small signature fixes on first build, particularly around Appium's `DefaultElementByBuilder`
   and Playwright option classes.

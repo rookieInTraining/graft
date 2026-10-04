@@ -67,10 +67,10 @@ GET    /health
 `PUT` body, last-write-wins:
 
 ```json
-{ "kind": "testId", "value": "signin-btn", "origin": "LoginPage.java:12", "framework": "SELENIUM" }
+{ "kind": "testId", "value": "signin-btn", "within": ["frame=#login"], "origin": "LoginPage.java:12", "framework": "SELENIUM" }
 ```
 
-`kind` and `value` are required and non-blank. `origin` may be empty. `framework` is optional. The server assigns `learnedAt` from its own clock and returns `200` with the stored entry. Clients do not send `learnedAt`.
+`kind` and `value` are required and non-blank. `within` is an optional JSON array of strings (`frame=<css>` / `shadow=<css>` hops, outside-in); missing means the top-level document, and clients write it only when non-empty. `origin` may be empty. `framework` is optional. The server assigns `learnedAt` from its own clock and returns `200` with the stored entry. Clients do not send `learnedAt`.
 
 Stored and returned entry:
 
@@ -78,11 +78,14 @@ Stored and returned entry:
 {
   "kind": "testId",
   "value": "signin-btn",
+  "within": ["frame=#login"],
   "origin": "LoginPage.java:12",
   "framework": "SELENIUM",
   "learnedAt": "2026-10-02T16:40:00.000Z"
 }
 ```
+
+Compatibility and rollout: `within` is additive. A server or client from before this field drops it (`CacheJson` ignores unknown fields), so upgrade the cache server before the test clients. An old client that reads a `within` entry replays it in the current context, where it either misses and the entry is evicted, or matches the wrong element. Entries without `within` are unchanged and read the same by old and new code.
 
 `GET` the collection returns a JSON object whose keys are locator keys and whose values are stored entries. This is the waiting-to-fix list.
 
