@@ -18,6 +18,10 @@ import java.util.Optional;
 /**
  * The local JSON file ({@code .graft/learned-locators.json} by default).
  * {@link #forget} always deletes; a single file has no cross-process compare-and-delete.
+ *
+ * <p>A row this version cannot read (an unknown or invalid {@code within} hop, a missing
+ * {@code kind}, ...) is skipped for lookups with a one-line WARNING, and written back verbatim on
+ * save, so rows from a newer Graft or a hand edit survive. Learning that key replaces it.
  */
 public final class FileLocatorStore implements LearnedLocatorStore {
 
@@ -25,6 +29,8 @@ public final class FileLocatorStore implements LearnedLocatorStore {
 
     private final Path path;
     private final Map<String, StoredEntry> entries = new LinkedHashMap<>();
+    /** Rows skipped on load, kept as read so {@link #save} writes them back unchanged. */
+    private final Map<String, JsonElement> skipped = new LinkedHashMap<>();
 
     public FileLocatorStore(Path path) {
         this.path = path;
@@ -40,6 +46,7 @@ public final class FileLocatorStore implements LearnedLocatorStore {
     public synchronized void learn(String key, LocatorSuggestion suggestion, String origin, String framework) {
         if (suggestion == null) return;
         entries.put(key, new StoredEntry(suggestion, origin, Instant.now().toString(), framework));
+        skipped.remove(key);
         save();
     }
 
@@ -57,16 +64,29 @@ public final class FileLocatorStore implements LearnedLocatorStore {
 
     private void load() {
         if (!Files.exists(path)) return;
+        JsonObject root;
         try {
-            JsonObject root = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
-            for (Map.Entry<String, JsonElement> e : root.entrySet()) {
-                JsonObject o = e.getValue().getAsJsonObject();
-                LocatorSuggestion s = LocatorSuggestion.of(str(o, "kind"), str(o, "value"), CacheJson.within(o));
-                if (s != null) entries.put(e.getKey(), new StoredEntry(s, str(o, "origin"), str(o, "learnedAt"), str(o, "framework")));
-            }
+            root = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
         } catch (IOException | RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Ignoring unreadable learned-locator store " + path + ": " + e.getMessage());
+            return;
         }
+        for (Map.Entry<String, JsonElement> e : root.entrySet()) {
+            try {
+                entries.put(e.getKey(), parse(e.getValue()));
+            } catch (RuntimeException bad) {
+                skipped.put(e.getKey(), e.getValue());
+                LOG.log(System.Logger.Level.WARNING, "Skipping unreadable learned-locator row \"" + e.getKey()
+                        + "\" in " + path + " (kept in the file): " + bad.getMessage());
+            }
+        }
+    }
+
+    private static StoredEntry parse(JsonElement row) {
+        JsonObject o = row.getAsJsonObject();
+        LocatorSuggestion s = LocatorSuggestion.of(str(o, "kind"), str(o, "value"), CacheJson.within(o));
+        if (s == null) throw new IllegalArgumentException("kind or value is missing");
+        return new StoredEntry(s, str(o, "origin"), str(o, "learnedAt"), str(o, "framework"));
     }
 
     private void save() {
@@ -82,6 +102,7 @@ public final class FileLocatorStore implements LearnedLocatorStore {
             o.put("learnedAt", e.learnedAt());
             root.put(k, o);
         });
+        skipped.forEach(root::putIfAbsent);
         try {
             if (path.getParent() != null) Files.createDirectories(path.getParent());
             Files.writeString(path, new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root),
