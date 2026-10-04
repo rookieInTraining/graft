@@ -22,8 +22,13 @@ import java.util.Optional;
  *
  * <p>{@code learnedAt} is written at a fixed width so the compare-and-delete Lua script can
  * order instants with a string compare. The same rule as {@link ConditionalForget}.
+ *
+ * <p>A row this version cannot read (an unknown or invalid {@code within} hop, bad JSON) is absent
+ * for {@link #get} and {@link #snapshot}, with a one-line WARNING, as in {@link HttpLocatorStore}.
  */
 public final class RedisLocatorStore implements LearnedLocatorStore {
+
+    private static final System.Logger LOG = System.getLogger(RedisLocatorStore.class.getName());
 
     static final DateTimeFormatter LEARNED_AT = DateTimeFormatter
             .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'")
@@ -81,7 +86,20 @@ public final class RedisLocatorStore implements LearnedLocatorStore {
     public Optional<StoredEntry> get(String key) {
         String raw = jedis.get(CachePaths.redisKey(namespace, key));
         if (raw == null) return Optional.empty();
-        return Optional.of(CacheJson.parseEntry(raw));
+        return parseRow(key, raw);
+    }
+
+    /** One stored row; empty (with a one-line WARNING) when it cannot be read, or has no suggestion. */
+    static Optional<StoredEntry> parseRow(String key, String raw) {
+        StoredEntry entry;
+        try {
+            entry = CacheJson.parseEntry(raw);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Ignoring unreadable learned-locator row " + key + " ("
+                    + e.getClass().getSimpleName() + ": " + e.getMessage() + ")");
+            return Optional.empty();
+        }
+        return entry.suggestion() == null ? Optional.empty() : Optional.of(entry);
     }
 
     @Override
@@ -115,8 +133,8 @@ public final class RedisLocatorStore implements LearnedLocatorStore {
                 if (!redisKey.startsWith(prefix)) continue;
                 String raw = jedis.get(redisKey);
                 if (raw == null) continue;
-                StoredEntry entry = CacheJson.parseEntry(raw);
-                if (entry.suggestion() != null) out.put(redisKey.substring(prefix.length()), entry);
+                String key = redisKey.substring(prefix.length());
+                parseRow(key, raw).ifPresent(entry -> out.put(key, entry));
             }
             cursor = scan.getCursor();
         } while (!ScanParams.SCAN_POINTER_START.equals(cursor));
