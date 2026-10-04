@@ -14,6 +14,10 @@ import java.lang.reflect.Method;
  * Mirrors Selenium's {@code LocatingElementHandler}: every call resolves the element, then
  * delegates. Resolution may heal, and a {@link StaleElementReferenceException} triggers a
  * re-resolve instead of surfacing. Used by {@code @Element} fields and {@code HealingBy.proxied()}.
+ *
+ * <p>Switch &amp; restore: when the element sits in an iframe, each call captures the test's frame
+ * ({@link FrameState}), enters the element's frame, delegates, and restores the test's frame,
+ * also when the call throws. {@code getWrappedElement()} returns the raw element without switching.
  */
 final class HealingElementHandler implements InvocationHandler {
 
@@ -40,24 +44,34 @@ final class HealingElementHandler implements InvocationHandler {
             }
         }
 
-        WebElement element = healer.resolve(spec, primary, context);
+        Located located = healer.resolve(spec, primary, context, false);
         if ("getWrappedElement".equals(method.getName()) && method.getParameterCount() == 0) {
-            return element;
+            return located.element();
         }
 
+        FrameState state = located.frames().isEmpty() ? null : healer.frameState();
         try {
-            return method.invoke(element, args);
-        } catch (InvocationTargetException ite) {
-            Throwable cause = ite.getCause();
-            if (cause instanceof StaleElementReferenceException stale) {
-                WebElement fresh = healer.reResolveAfterStale(spec, primary, context, stale);
+            if (state != null) healer.enter(located);
+            try {
+                return method.invoke(located.element(), args);
+            } catch (InvocationTargetException ite) {
+                Throwable cause = ite.getCause();
+                if (!(cause instanceof StaleElementReferenceException stale)) throw cause;
+                // Re-resolve from the test's frame; the fresh element's frame is entered by the re-resolve.
+                if (state != null) {
+                    state.restore();
+                } else {
+                    state = healer.frameState();
+                }
+                Located fresh = healer.reResolveAfterStale(spec, primary, context, stale, state);
                 try {
-                    return method.invoke(fresh, args);
+                    return method.invoke(fresh.element(), args);
                 } catch (InvocationTargetException again) {
                     throw again.getCause();
                 }
             }
-            throw cause;
+        } finally {
+            if (state != null) state.restore();
         }
     }
 }

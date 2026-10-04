@@ -8,7 +8,6 @@ import tech.ishabbi.graft.LocatorSuggestion;
 import tech.ishabbi.graft.cache.MemoryLocatorStore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,20 +18,14 @@ import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.SearchContext;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
-import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.chrome.ChromeOptions;
 
-import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -71,40 +64,7 @@ class SeleniumShadowTest {
 
     @BeforeAll
     static void launch() {
-        String failure;
-        try {
-            driver = new ChromeDriver(options());
-            failure = null;
-        } catch (RuntimeException e) {
-            failure = e.toString();
-            Path chromium = playwrightChromium();
-            if (chromium != null) {
-                try {
-                    driver = new ChromeDriver(options().setBinary(chromium.toFile()));
-                } catch (RuntimeException again) {
-                    failure += " / with " + chromium + ": " + again;
-                }
-            }
-        }
-        Assumptions.assumeTrue(driver != null, "No Chrome/chromedriver available: " + failure);
-    }
-
-    private static ChromeOptions options() {
-        return new ChromeOptions().addArguments("--headless=new");
-    }
-
-    private static Path playwrightChromium() {
-        Path root = Path.of(System.getenv().getOrDefault("LOCALAPPDATA", ""), "ms-playwright");
-        if (!Files.isDirectory(root)) return null;
-        try (Stream<Path> dirs = Files.list(root)) {
-            return dirs.filter(d -> d.getFileName().toString().startsWith("chromium-"))
-                    .sorted((a, b) -> b.compareTo(a))
-                    .flatMap(d -> Stream.of(d.resolve("chrome-win64/chrome.exe"), d.resolve("chrome-win/chrome.exe")))
-                    .filter(Files::isRegularFile)
-                    .findFirst().orElse(null);
-        } catch (IOException e) {
-            return null;
-        }
+        driver = BrowserDrivers.headlessChrome();
     }
 
     @AfterAll
@@ -212,6 +172,25 @@ class SeleniumShadowTest {
         healer(js("return document.querySelector('body > button');", calls));
         assertThrows(SeleniumHealer.OutOfScopeException.class,
                 () -> root.findElement(HealingBy.of(By.cssSelector("#gone"), "the top button")));
+    }
+
+    @Test
+    void learnedWithinIsAbsoluteSoItReplaysUnderAScopedShadowRoot() {
+        HealingBy direct = HealingBy.of(By.cssSelector("#gone"), "the direct button, scoped heal");
+        AtomicInteger first = new AtomicInteger();
+        SeleniumHealer healer = healer(js(DIRECT_JS, first));
+        SearchContext root = driver.findElement(By.id("outer-host")).getShadowRoot();
+
+        assertEquals("Direct", root.findElement(direct).getText());
+        assertEquals(1, first.get());
+        assertEquals(new LocatorSuggestion("css", "button", List.of("shadow=#outer-host")), learned(direct));
+
+        healer.close();
+        open.remove(healer);
+        AtomicInteger second = new AtomicInteger();
+        healer(throwing(second));
+        assertEquals("Direct", root.findElement(direct).getText());
+        assertEquals(0, second.get(), "the learned within is entered from the top document, not from the root");
     }
 
     @Test

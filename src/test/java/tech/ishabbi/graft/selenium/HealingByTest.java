@@ -1,5 +1,6 @@
 package tech.ishabbi.graft.selenium;
 
+import tech.ishabbi.graft.AnchoredLocatorScript;
 import tech.ishabbi.graft.HealReport;
 import tech.ishabbi.graft.HealingConfig;
 import tech.ishabbi.graft.HealingException;
@@ -85,7 +86,10 @@ class HealingByTest {
             WebElement e = elements.get(by.toString());
             return e == null ? List.of() : List.of(e);
         }
-        @Override public Object executeScript(String script, Object... args) { return jsContains; }
+        /** The anchored-locator script finds nothing unique (null); every other script answers {@link #jsContains}. */
+        @Override public Object executeScript(String script, Object... args) {
+            return script.contains(AnchoredLocatorScript.source()) ? null : jsContains;
+        }
         @Override public Object executeAsyncScript(String script, Object... args) { return null; }
         @Override public void get(String url) {}
         @Override public String getCurrentUrl() { return ""; }

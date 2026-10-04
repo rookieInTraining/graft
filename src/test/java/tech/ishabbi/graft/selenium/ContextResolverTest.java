@@ -101,6 +101,19 @@ class ContextResolverTest {
         assertTrue(e.getMessage().contains("shadow=#plain"), e.getMessage());
     }
 
+    @Test
+    void missingIframeOrHostNamesTheHop() {
+        NoSuchElementException frame = assertThrows(NoSuchElementException.class,
+                () -> ContextResolver.enter(driver, driver, Within.parseAll("frame=#pay")));
+        assertTrue(frame.getMessage().startsWith("Cannot enter frame=#pay: "), frame.getMessage());
+        assertTrue(frame.getCause() instanceof NoSuchElementException, String.valueOf(frame.getCause()));
+
+        NoSuchElementException host = assertThrows(NoSuchElementException.class,
+                () -> ContextResolver.enter(driver, driver, Within.parseAll("shadow=#card")));
+        assertTrue(host.getMessage().startsWith("Cannot enter shadow=#card: "), host.getMessage());
+        assertTrue(host.getCause() instanceof NoSuchElementException, String.valueOf(host.getCause()));
+    }
+
     // ---- resolution through within ---------------------------------------------------------
 
     private SeleniumHealer healer(MemoryLocatorStore store, AtomicInteger finderCalls) {
@@ -154,13 +167,17 @@ class ContextResolverTest {
         HealingPageFactory.initElements(page, healer(new MemoryLocatorStore(), calls));
 
         assertEquals("Pay", page.pay.getText());
+        // Resolve (then restore the test's frame), and enter the frame again for the call (then restore).
+        // The stub has no JS, so the captured frame state is the top.
         assertEquals(List.of("defaultContent", "find(top, By.cssSelector: #pay)", "frame(pay)",
-                "find(pay, By.cssSelector: button.pay)"), log);
+                "find(pay, By.cssSelector: button.pay)", "defaultContent",
+                "defaultContent", "find(top, By.cssSelector: #pay)", "frame(pay)", "defaultContent"), log);
+        assertEquals("top", driver.frame);
 
         log.clear();
         assertEquals("4242", page.number.getText());
         assertEquals(List.of("defaultContent", "find(top, By.cssSelector: #card)", "getShadowRoot(card)",
-                "find(card#shadow, By.cssSelector: [id=\"number\"])"), log);
+                "find(card#shadow, By.cssSelector: [id=\"number\"])", "defaultContent"), log);
         assertEquals(0, calls.get());
     }
 
@@ -178,6 +195,27 @@ class ContextResolverTest {
 
         assertSame(button, driver.findElement(save));
         assertEquals(0, calls.get());
+    }
+
+    @Test
+    void healUnderAFrameHopStartsFromTheTestsFrame() {
+        RecordingStubs.Element iframe = el("pay");
+        RecordingStubs.Element found = el("found").attr("id", "pay-btn");
+        driver.put("top", By.cssSelector("#pay"), iframe);
+        driver.js = script -> script.equals(FrameState.IS_TOP_JS) ? Boolean.TRUE : null;
+        List<String> framesSeen = new ArrayList<>();
+        HealingConfig config = HealingConfig.builder().reportPath(null).learnedStore(new MemoryLocatorStore())
+                .locatorTimeout(Duration.ZERO).pollInterval(Duration.ofMillis(1)).build();
+        open.add(SeleniumHealer.withFinder(driver, d -> {
+            framesSeen.add(driver.frame);
+            return found;
+        }, config));
+
+        WebElement el = driver.findElement(
+                HealingBy.of(By.cssSelector("button.gone"), "the pay button").within("frame=#pay"));
+
+        assertSame(found, el);
+        assertEquals(List.of("top"), framesSeen, "Alumnium must not inherit the iframe the primary searched");
     }
 
     @Test

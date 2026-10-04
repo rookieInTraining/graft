@@ -29,6 +29,7 @@ import org.openqa.selenium.interactions.Locatable;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,6 +55,12 @@ import java.util.function.Supplier;
  * <p>Resolution for every access: cached healed element → primary locator polled for the timeout →
  * learned locator → Alumnium. Heals are scoped: when the search context is an element or a shadow
  * root, the healed element must be inside it.
+ *
+ * <p>Frames ("switch &amp; restore"): Selenium's frame state is global to the driver, and Alumnium
+ * switches into a healed element's frame chain without switching back. A resolution remembers the
+ * element's frame hops ({@link Located}); a proxy ({@code @Element}, {@link HealingBy#proxied()})
+ * enters them for each call and restores the test's frame afterwards ({@link FrameState}). A raw
+ * {@link HealingBy#findElement} returns a plain element, so it leaves the driver in that frame.
  */
 public final class SeleniumHealer extends AbstractHealer {
 
@@ -61,7 +68,7 @@ public final class SeleniumHealer extends AbstractHealer {
     private final Framework framework;
     private final AiFinder finder;
     private final Runnable closer;
-    private final Map<String, WebElement> healed = new ConcurrentHashMap<>();
+    private final Map<String, Located> healed = new ConcurrentHashMap<>();
 
     private SeleniumHealer(WebDriver driver, AiFinder finder, Runnable closer, HealingConfig config) {
         super(config);
@@ -147,19 +154,105 @@ public final class SeleniumHealer extends AbstractHealer {
     /**
      * Resolves one interaction's element. {@code primary} may be {@code null} (description-only);
      * {@code context} is the driver or the element the lookup was scoped to.
+     *
+     * <p>Frames: with {@code stay} (a raw {@link HealingBy#findElement}) the driver is left in the
+     * element's frame. Without it (proxies) the driver is back in the test's frame on return, and
+     * the caller enters {@link Located#frames()} itself for the actual call ({@link #enter}).
      */
-    WebElement resolve(LocatorSpec spec, By primary, SearchContext context) {
-        WebElement cached = healed.get(spec.key());
-        if (cached != null) return cached;
+    Located resolve(LocatorSpec spec, By primary, SearchContext context, boolean stay) {
+        Located cached = healed.get(spec.key());
+        if (cached != null) {
+            if (stay) enter(cached);
+            return cached;
+        }
+        return locate(spec, primary, context, spec.locatorTimeout(config()), null, stay, null);
+    }
 
-        if (primary == null) {
-            return cacheHealed(spec, findByDescription(spec, context));
+    /**
+     * Raw {@link HealingBy#findElement}: a plain element, so the driver has to stay switched into
+     * the element's frame for it to be usable.
+     */
+    WebElement find(LocatorSpec spec, By primary, SearchContext context) {
+        Located located = resolve(spec, primary, context, true);
+        if (!located.frames().isEmpty()) {
+            log.log(System.Logger.Level.DEBUG, "{0}: the element is inside {1}; the driver stays switched into "
+                    + "that frame (use HealingBy.proxied() to switch and restore)",
+                    spec.displayName(), Within.formatAll(located.frames()));
         }
+        return located.element();
+    }
+
+    /** Switches the driver into the located element's frame (no-op when it has no frame hops). */
+    void enter(Located located) {
+        if (!located.frames().isEmpty()) ContextResolver.enter(driver, located.from(), located.frames());
+    }
+
+    /** The test's current frame, to restore after switching; a no-op state for native Appium. */
+    FrameState frameState() {
+        return framework == Framework.APPIUM ? FrameState.none() : FrameState.capture(driver);
+    }
+
+    /**
+     * One resolution after the cache: the primary (through its {@code within}), then the heal.
+     * {@code outer} is the test's frame state when the caller (a proxy) already captured it and
+     * will restore it; {@code healCause} replaces the primary's failure as the heal's cause.
+     */
+    private Located locate(LocatorSpec spec, By primary, SearchContext context, Duration timeout,
+                           Throwable healCause, boolean stay, FrameState outer) {
+        boolean switches = switchesFrames(spec, context);
+        FrameState caller = outer != null ? outer : switches ? frameState() : null;
+        Throwable cause = healCause;
+        if (primary != null) {
+            try {
+                WebElement el = waitFor(scopeOf(spec, context), primary, timeout);
+                if (!stay && outer == null && caller != null) caller.restore();
+                return new Located(el, Located.framePrefix(spec.within()), context);
+            } catch (NoSuchElementException | InvalidSelectorException primaryFailure) {
+                if (cause == null) cause = primaryFailure;
+            } catch (RuntimeException e) {
+                if (outer == null && caller != null) caller.restore();
+                throw e;
+            }
+        }
+        // The heal must not inherit the iframe the primary searched: back to the test's frame first.
+        if (switches) caller.restore();
+        return cacheHealed(spec, healInto(spec, primary, context, cause, caller, stay));
+    }
+
+    /** True when entering the spec's {@code within} from {@code context} switches the driver's frame. */
+    private static boolean switchesFrames(LocatorSpec spec, SearchContext context) {
+        List<Within.Hop> within = spec.within();
+        return !within.isEmpty() && (context instanceof WebDriver || !Located.framePrefix(within).isEmpty());
+    }
+
+    /**
+     * Learned tier, then Alumnium (or Alumnium alone for a description-only spec). Both may switch
+     * frames: Alumnium switches into the element's frame chain and never switches back. Without
+     * {@code stay} the test's frame is restored afterwards, also on failure. With {@code stay} the
+     * driver is left in the element's frame, where the heal left it (restored only on failure).
+     */
+    private Located healInto(LocatorSpec spec, By primary, SearchContext context, Throwable cause,
+                             FrameState caller, boolean stay) {
+        FrameState before = caller != null ? caller : frameState();
+        boolean[] lost = {false};   // found in a frame whose hops could not be derived
+        Located found;
         try {
-            return waitFor(scopeOf(spec, context), primary, spec.locatorTimeout(config()));
-        } catch (NoSuchElementException | InvalidSelectorException primaryFailure) {
-            return cacheHealed(spec, healWithAlumnium(spec, primary, context, primaryFailure));
+            found = primary == null ? describeOnly(spec, context, lost)
+                    : healWithAlumnium(spec, primary, context, cause, lost);
+        } catch (RuntimeException e) {
+            before.restore();
+            throw e;
         }
+        if (stay) return found;
+        if (lost[0]) {
+            // Rare: the frame path has an iframe without a unique CSS (or the frame search hit its caps).
+            // Without hops the frame cannot be re-entered, so the driver is left where Alumnium put it.
+            log.log(System.Logger.Level.DEBUG, "{0}: Alumnium found the element in a frame Graft cannot re-enter; "
+                    + "leaving the driver switched into it", spec.displayName());
+            return found;
+        }
+        before.restore();
+        return found;
     }
 
     /**
@@ -172,17 +265,15 @@ public final class SeleniumHealer extends AbstractHealer {
         return () -> ContextResolver.enter(driver, context, within).context();
     }
 
-    /** A healed (cached) element went stale: quick retry of the primary, then Alumnium again. */
-    WebElement reResolveAfterStale(LocatorSpec spec, By primary, SearchContext context, Throwable stale) {
+    /**
+     * A healed (cached) element went stale during a proxy call: quick retry of the primary, then
+     * Alumnium again. {@code outer} is the test's frame state, captured (and later restored) by the
+     * proxy; the driver is left in the fresh element's frame for the retried call.
+     */
+    Located reResolveAfterStale(LocatorSpec spec, By primary, SearchContext context, Throwable stale,
+                                FrameState outer) {
         healed.remove(spec.key());
-        if (primary == null) {
-            return cacheHealed(spec, findByDescription(spec, context));
-        }
-        try {
-            return waitFor(scopeOf(spec, context), primary, config().pollInterval());
-        } catch (NoSuchElementException | InvalidSelectorException ignored) {
-            return cacheHealed(spec, healWithAlumnium(spec, primary, context, stale));
-        }
+        return locate(spec, primary, context, config().pollInterval(), stale, true, outer);
     }
 
     /** Used by {@link AlumniumBy}: Alumnium is the primary locator; failures become {@link NoSuchElementException}. */
@@ -204,17 +295,26 @@ public final class SeleniumHealer extends AbstractHealer {
         return el;
     }
 
-    private WebElement healWithAlumnium(LocatorSpec spec, By primary, SearchContext context, Throwable cause) {
+    /** A description-only spec: Alumnium is the locator, with the frame hops of what it found. */
+    private Located describeOnly(LocatorSpec spec, SearchContext context, boolean[] lost) {
+        WebElement el = findByDescription(spec, context);
+        return locatedByAlumnium(el, frameHops(el), lost);
+    }
+
+    private Located healWithAlumnium(LocatorSpec spec, By primary, SearchContext context, Throwable cause,
+                                     boolean[] lost) {
+        List<List<String>> hops = new ArrayList<>(1);   // the frame hops of what Alumnium found
         try {
             return heal(spec, primary.toString(), cause,
                     suggestion -> tryLearned(spec, suggestion, context),
                     () -> {
                         WebElement el = findWithAlumnium(spec);
                         requireInScope(spec, el, context, cause);
-                        return el;
+                        hops.add(frameHops(el));
+                        return locatedByAlumnium(el, hops.get(0), lost);
                     },
-                    SuggestedLocator::describe,
-                    found -> SuggestedLocator.suggest(driver, found, framework));
+                    found -> SuggestedLocator.describe(found.element()),
+                    found -> SuggestedLocator.suggest(driver, found.element(), framework, hops.get(0)));
         } catch (HealingException e) {
             for (Throwable t : e.getSuppressed()) {
                 if (t instanceof OutOfScopeException scope) throw scope;   // keep Selenium's exception type
@@ -223,9 +323,26 @@ public final class SeleniumHealer extends AbstractHealer {
         }
     }
 
-    private WebElement cacheHealed(LocatorSpec spec, WebElement el) {
-        healed.put(spec.key(), el);
-        return el;
+    /**
+     * The {@code within} hops of the frames an element Alumnium found sits in ({@link FramePath#hopsFor});
+     * the driver is in that element's frame. Empty for native Appium; {@code null} when unusable.
+     */
+    private List<String> frameHops(WebElement el) {
+        return framework == Framework.APPIUM ? List.of() : FramePath.hopsFor(driver, el);
+    }
+
+    /** Alumnium's element, re-entered from the top through its frame hops ({@code null} hops: none, and lost). */
+    private Located locatedByAlumnium(WebElement el, List<String> hops, boolean[] lost) {
+        if (hops == null) {
+            lost[0] = true;
+            return new Located(el, List.of(), driver);
+        }
+        return new Located(el, Within.parseAll(hops), driver);
+    }
+
+    private Located cacheHealed(LocatorSpec spec, Located located) {
+        healed.put(spec.key(), located);
+        return located;
     }
 
     private WebElement findWithAlumnium(LocatorSpec spec) {
@@ -236,14 +353,16 @@ public final class SeleniumHealer extends AbstractHealer {
     }
 
     /**
-     * One quick attempt with a locator remembered from an earlier heal; {@code null} on miss. The
-     * suggestion's {@code within} is entered first (failing to enter is a miss); inside a shadow
-     * root the locator must map to CSS.
+     * One quick attempt with a locator remembered from an earlier heal; {@code null} on miss. A
+     * learned {@code within} is absolute (computed from the top-level document), so it is entered
+     * from the driver even under a scoped search context; failing to enter is a miss, and so is a
+     * match outside the scope. Inside a shadow root the locator must map to CSS.
      */
-    private WebElement tryLearned(LocatorSpec spec, LocatorSuggestion suggestion, SearchContext context) {
+    private Located tryLearned(LocatorSpec spec, LocatorSuggestion suggestion, SearchContext context) {
+        List<Within.Hop> within = Within.parseAll(suggestion.within());
         ContextResolver.Scope scope;
         try {
-            scope = ContextResolver.enter(driver, context, Within.parseAll(suggestion.within()));
+            scope = ContextResolver.enter(driver, driver, within);
         } catch (RuntimeException miss) {
             log.log(System.Logger.Level.DEBUG, "{0}: cannot enter the learned locator''s context {1}: {2}",
                     spec.displayName(), suggestion.within(), miss.getMessage());
@@ -257,11 +376,20 @@ public final class SeleniumHealer extends AbstractHealer {
             }
             return null;
         }
+        WebElement el;
         try {
-            return waitFor(scope::context, by, config().pollInterval());
+            el = waitFor(scope::context, by, config().pollInterval());
         } catch (NoSuchElementException | InvalidSelectorException miss) {
             return null;
         }
+        try {
+            requireInScope(spec, el, context, null);
+        } catch (OutOfScopeException outside) {
+            log.log(System.Logger.Level.DEBUG, "{0}: learned locator {1} matched outside the search context; "
+                    + "treating it as a miss", spec.displayName(), suggestion);
+            return null;
+        }
+        return new Located(el, Located.framePrefix(within), driver);
     }
 
     /**

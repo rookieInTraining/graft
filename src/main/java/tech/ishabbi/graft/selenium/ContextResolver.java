@@ -20,7 +20,8 @@ import java.util.List;
  * context unchanged and makes no calls.
  *
  * <p>A frame hop leaves the driver switched into that frame; restoring the test's frame is the
- * caller's job. A missing iframe, host, or shadow root surfaces as {@link NoSuchElementException}.
+ * caller's job ({@link FrameState}). A missing iframe, host, or shadow root surfaces as
+ * {@link NoSuchElementException} ({@code "Cannot enter <hop>: …"}, with the original as the cause).
  */
 final class ContextResolver {
 
@@ -45,9 +46,7 @@ final class ContextResolver {
                     current = found.getShadowRoot();
                     inShadow = true;
                 }
-            } catch (NoSuchElementException e) {
-                throw e;
-            } catch (NotFoundException e) {   // NoSuchShadowRootException, NoSuchFrameException
+            } catch (NotFoundException e) {   // missing iframe / host, NoSuchShadowRootException, NoSuchFrameException
                 NoSuchElementException miss = new NoSuchElementException(
                         "Cannot enter " + hop.format() + ": " + e.getMessage());
                 miss.initCause(e);

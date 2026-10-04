@@ -33,7 +33,9 @@ import java.util.Objects;
  *   <li>{@link #findElements}: primary only, never heals — an empty list is a legitimate answer.</li>
  *   <li>Not {@code By.Remotable}, so RemoteWebDriver always routes through this class.</li>
  *   <li>Returns the raw {@link WebElement} unless {@link #proxied()} — then a self-healing proxy
- *       that also recovers from {@code StaleElementReferenceException}.</li>
+ *       that also recovers from {@code StaleElementReferenceException}, and switches into the
+ *       element's iframe for each call and back to the test's frame afterwards. A raw element in
+ *       an iframe leaves the driver switched into that frame (see {@link #findElement}).</li>
  * </ul>
  */
 public final class HealingBy extends By implements LocatorSpec {
@@ -91,11 +93,18 @@ public final class HealingBy extends By implements LocatorSpec {
 
     // ---- By ------------------------------------------------------------------------------
 
+    /**
+     * Resolves (and if needed heals) the element. Without {@link #proxied()} this returns the plain
+     * {@link WebElement}, so for content inside an iframe the driver is <b>left switched into that
+     * frame</b> (it has to be, for the element to be usable); switch back yourself, e.g. with
+     * {@code driver.switchTo().defaultContent()}. Use {@link #proxied()} to have each call enter the
+     * element's frame and restore the test's frame afterwards.
+     */
     @Override
     public WebElement findElement(SearchContext context) {
         SeleniumHealer healer = DriverRegistry.require(context);
         if (!proxied) {
-            return healer.resolve(this, primary, context);
+            return healer.find(this, primary, context);
         }
         return (WebElement) Proxy.newProxyInstance(
                 WebElement.class.getClassLoader(),

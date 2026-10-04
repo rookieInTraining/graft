@@ -13,7 +13,9 @@ import org.openqa.selenium.SearchContext;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +26,8 @@ import java.util.function.Function;
  * Stubs that record every context call ({@code defaultContent}, {@code frame}, finds,
  * {@code getShadowRoot}) in one shared log, for checking the exact calls {@link ContextResolver}
  * and the healer make. Finds are lookup tables keyed by {@code By.toString()}; the driver's table
- * is per frame (the name of the iframe element last switched into, {@code top} at the top).
+ * is per frame (the name of the iframe element last switched into, {@code top} at the top);
+ * {@code parentFrame} returns to the frame switched from.
  */
 final class RecordingStubs {
 
@@ -34,8 +37,11 @@ final class RecordingStubs {
         final List<String> log = new ArrayList<>();
         final Map<String, Map<String, WebElement>> frames = new HashMap<>();
         String frame = "top";
+        final Deque<String> parents = new ArrayDeque<>();
         /** Answers executeScript; the default throws, as a driver without JS would. */
         Function<String, Object> js = script -> { throw new UnsupportedOperationException("no JS in stub"); };
+        /** The arguments of the executeScript call being answered. */
+        Object[] args = new Object[0];
 
         Driver put(String frameName, By by, WebElement el) {
             frames.computeIfAbsent(frameName, k -> new HashMap<>()).put(by.toString(), el);
@@ -53,7 +59,10 @@ final class RecordingStubs {
             WebElement e = frames.getOrDefault(frame, Map.of()).get(by.toString());
             return e == null ? List.of() : List.of(e);
         }
-        @Override public Object executeScript(String script, Object... args) { return js.apply(script); }
+        @Override public Object executeScript(String script, Object... args) {
+            this.args = args;
+            return js.apply(script);
+        }
         @Override public Object executeAsyncScript(String script, Object... args) { return null; }
         @Override public void get(String url) {}
         @Override public String getCurrentUrl() { return ""; }
@@ -71,16 +80,22 @@ final class RecordingStubs {
                 @Override public WebDriver defaultContent() {
                     log.add("defaultContent");
                     frame = "top";
+                    parents.clear();
                     return Driver.this;
                 }
                 @Override public WebDriver frame(WebElement el) {
                     log.add("frame(" + el + ")");
+                    parents.push(frame);
                     frame = ((Element) el).name;
                     return Driver.this;
                 }
                 @Override public WebDriver frame(int index) { throw new UnsupportedOperationException(); }
                 @Override public WebDriver frame(String nameOrId) { throw new UnsupportedOperationException(); }
-                @Override public WebDriver parentFrame() { throw new UnsupportedOperationException(); }
+                @Override public WebDriver parentFrame() {
+                    log.add("parentFrame");
+                    frame = parents.isEmpty() ? "top" : parents.pop();
+                    return Driver.this;
+                }
                 @Override public WebDriver window(String nameOrHandle) { throw new UnsupportedOperationException(); }
                 @Override public WebDriver newWindow(org.openqa.selenium.WindowType typeHint) { throw new UnsupportedOperationException(); }
                 @Override public WebElement activeElement() { throw new UnsupportedOperationException(); }
