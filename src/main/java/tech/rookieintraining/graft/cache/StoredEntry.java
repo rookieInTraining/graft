@@ -1,0 +1,6 @@
+package tech.rookieintraining.graft.cache;
+
+import tech.rookieintraining.graft.LocatorSuggestion;
+
+/** One remembered locator. {@code learnedAt} is an ISO-8601 instant assigned by the store. */
+public record StoredEntry(LocatorSuggestion suggestion, String origin, String learnedAt, String framework) {}

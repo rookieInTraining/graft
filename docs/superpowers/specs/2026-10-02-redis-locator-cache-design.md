@@ -4,13 +4,13 @@ Date: 2026-10-02
 
 ## Outcome
 
-Share learned locators across machines and CI shards so Alumnium is called once per broken locator, not once per JVM. The local JSON file stays the default. Redis is reached only through a small HTTP service that lives in this repo, in the package `tech.ishabbi.graft.cache`. There is no second Gradle module and no move of the existing sources.
+Share learned locators across machines and CI shards so Alumnium is called once per broken locator, not once per JVM. The local JSON file stays the default. Redis is reached only through a small HTTP service that lives in this repo, in the package `tech.rookieintraining.graft.cache`. There is no second Gradle module and no move of the existing sources.
 
 Success: a test JVM with `GRAFT_LEARNED_URL` set replays a suggestion written by another JVM, a newer heal is not deleted by an older miss, and a down cache does not fail the test.
 
 ## What stays
 
-- Artifact `tech.ishabbi:graft`, sources at the repo root.
+- Artifact `tech.rookieintraining:graft`, sources at the repo root.
 - Default store: `.graft/learned-locators.json`, overridable with `GRAFT_LEARNED`, disabled with `GRAFT_LEARNED=none`.
 - `LearnedLocators.at(Path)`, `disabled()`, `get`, `learn`, `forget`, `snapshot`, and the JSON file shape used by `LearnedLocatorsTest`.
 - Heal order: primary locator, then learned, then Alumnium. The store is consulted only after the primary misses.
@@ -18,7 +18,7 @@ Success: a test JVM with `GRAFT_LEARNED_URL` set replays a suggestion written by
 
 ## Package
 
-All cache types live in `tech.ishabbi.graft.cache`.
+All cache types live in `tech.rookieintraining.graft.cache`.
 
 | Type | Role |
 |---|---|
@@ -113,7 +113,7 @@ Keys: `graft:{namespace}:{locatorKey}`. The value is the stored-entry JSON.
 Dependency: `redis.clients:jedis:5.2.0`, `compileOnly`, same idea as Selenium. The published library does not force Jedis onto a project that only uses `HealingBy`. Running the server requires Jedis on the classpath:
 
 ```
-java -cp graft.jar:jedis.jar tech.ishabbi.graft.cache.CacheServer
+java -cp graft.jar:jedis.jar tech.rookieintraining.graft.cache.CacheServer
 ```
 
 `CacheServer` is the only type that references `RedisLocatorStore`. `main` loads that class reflectively and, if Jedis is absent, exits with a message that names `redis.clients:jedis:5.2.0`. Loading `HealingBy` does not load Jedis.

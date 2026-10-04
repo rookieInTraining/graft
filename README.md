@@ -362,7 +362,7 @@ repositories {
 }
 
 dependencies {
-    testImplementation("tech.ishabbi:graft:0.1.0-SNAPSHOT")
+    testImplementation("tech.rookieintraining:graft:0.1.0-SNAPSHOT")
     testRuntimeOnly("ai.alumnium:alumnium-cli-linux-x64:0.23.0")   // the binary for your CI platform
 }
 ```

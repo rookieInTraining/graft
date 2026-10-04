@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'tech.ishabbi'
+group = 'tech.rookieintraining'
 version = '0.1.0-SNAPSHOT'
 
 java {
@@ -57,7 +57,7 @@ tasks.register('cacheServer', JavaExec) {
     group = 'application'
     description = 'Start the learned-locator cache server. Uses REDIS_URL, or redis://127.0.0.1:6379.'
     classpath = sourceSets.main.runtimeClasspath + cacheServerJedis
-    mainClass = 'tech.ishabbi.graft.cache.CacheServer'
+    mainClass = 'tech.rookieintraining.graft.cache.CacheServer'
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(21)
     }
