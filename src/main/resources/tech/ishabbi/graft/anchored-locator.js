@@ -2,6 +2,8 @@
   // Derives a uniqueness-checked locator for `el`: {within: string[], kind, value} or null.
   // Framework-neutral (Playwright evaluate / Selenium executeScript). `within` lists the
   // `shadow=<css>` hops of the open shadow roots `el` sits in, outermost first.
+  // Tier order: own stable attribute, path from a stable ancestor anchor, unique short text,
+  // structural path from the root (:root / shadow top-level child), else null.
   // opts.cssOnlyInShadow: skip the text tier inside shadow roots (Selenium's text locator is XPath).
   opts = opts || {};
 
@@ -77,8 +79,8 @@
     return steps.join(' > ');
   };
 
-  // Tier 3: anchored on the nearest ancestor with a unique stable attribute, then the root.
-  const ancestorTier = (node, root) => {
+  // Tier 3: anchored on the nearest ancestor with a unique stable attribute.
+  const anchoredTier = (node, root) => {
     for (let a = node.parentElement; a; a = a.parentElement) {
       for (const name of STABLE) {
         const v = stableValue(a, name);
@@ -88,7 +90,12 @@
         break; // this anchor's path is ambiguous; try the next ancestor up
       }
     }
-    // `:host` is not usable in shadowRoot.querySelectorAll, so a shadow path starts at the top-level child.
+    return null;
+  };
+
+  // Last resort: a structural path from the root. `:host` is not usable in
+  // shadowRoot.querySelectorAll, so a shadow path starts at the top-level child.
+  const rootPathTier = (node, root) => {
     let css = null;
     if (isDocument(root) && node !== root.documentElement) css = ':root > ' + pathBelow(root.documentElement, node);
     if (isShadowRoot(root)) css = pathBelow(null, node);
@@ -98,17 +105,25 @@
   // Tier 4: short visible text that no other element in `root` has as its own text.
   const textOf = (node) => (typeof node.innerText === 'string' ? node.innerText.replace(/\s+/g, ' ').trim() : '');
   const ownsText = (node, text) => textOf(node) === text && !Array.from(node.children).some((c) => textOf(c) === text);
+  // Cheap pre-filter key: textContent needs no layout. Whitespace is dropped and case folded
+  // because innerText differs from textContent in both (block breaks, text-transform).
+  const textKey = (s) => s.replace(/\s+/g, '').toLowerCase();
   const textTier = (node, root) => {
     const text = textOf(node);
     if (!text || text.length > MAX_TEXT || !ownsText(node, text)) return null;
-    const owners = Array.from(root.querySelectorAll('*')).filter((n) => ownsText(n, text));
-    return owners.length === 1 ? { kind: 'text', value: text } : null;
+    const key = textKey(text);
+    let owners = 0;
+    for (const n of root.querySelectorAll('*')) {
+      if (!textKey(n.textContent || '').includes(key)) continue; // innerText only for candidates
+      if (ownsText(n, text) && ++owners > 1) return null;
+    }
+    return owners === 1 ? { kind: 'text', value: text } : null;
   };
 
-  // CSS-only locator for a shadow host in its own root (tiers 2 and 3).
+  // CSS-only locator for a shadow host in its own root (attribute and structural tiers, no text).
   const hostCss = (host) => {
     const root = host.getRootNode();
-    const found = ownTier(host, root, true) || ancestorTier(host, root);
+    const found = ownTier(host, root, true) || anchoredTier(host, root) || rootPathTier(host, root);
     return found ? found.value : null;
   };
 
@@ -116,7 +131,8 @@
   let root = el.getRootNode();
   if (!isDocument(root) && !isShadowRoot(root)) return null; // detached
   const skipText = !!opts.cssOnlyInShadow && isShadowRoot(root);
-  const own = ownTier(el, root, false) || ancestorTier(el, root) || (skipText ? null : textTier(el, root));
+  const own = ownTier(el, root, false) || anchoredTier(el, root)
+    || (skipText ? null : textTier(el, root)) || rootPathTier(el, root);
   if (!own) return null;
 
   const within = [];

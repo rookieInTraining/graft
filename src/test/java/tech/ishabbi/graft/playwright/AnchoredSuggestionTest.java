@@ -198,9 +198,40 @@ class AnchoredSuggestionTest {
     }
 
     @Test
-    void documentWithoutAnchorsFallsBackToRootPath() {
-        LocatorSuggestion s = suggestFor("<div><p>a</p></div><div><p data-graft-probe='t'>b</p></div>");
+    void documentWithoutAnchorsPrefersUniqueText() {
+        LocatorSuggestion s = suggestFor("<div><p>a</p></div><div><p data-graft-probe='t'>Unique   words</p></div>");
+        assertSuggestion(s, "text", "Unique words", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void textTierFindsOwnerDespiteTextTransform() {
+        LocatorSuggestion s = suggestFor(
+                "<div><p>a</p></div><div><p style='text-transform:uppercase' data-graft-probe='t'>Shout</p></div>");
+        assertSuggestion(s, "text", "SHOUT", List.of());
+    }
+
+    @Test
+    void duplicateTextFallsBackToRootPath() {
+        LocatorSuggestion s = suggestFor("<div><p>same</p></div><div><p data-graft-probe='t'>same</p></div>");
         assertSuggestion(s, "css", ":root > body > div:nth-of-type(2) > p", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void documentWithoutAnchorsOrTextFallsBackToRootPath() {
+        LocatorSuggestion s = suggestFor(
+                "<div><input type='text'></div><div><input type='text' data-graft-probe='t'></div>");
+        assertSuggestion(s, "css", ":root > body > div:nth-of-type(2) > input[type=\"text\"]", List.of());
+        assertResolvesToTarget(s);
+    }
+
+    @Test
+    void shadowRootPathIsTheLastResort() {
+        LocatorSuggestion s = suggestFor("<x-box id='box'></x-box>"
+                + shadow("document.getElementById('box')", "open",
+                        "<div><input type=\"checkbox\" data-graft-probe=\"t\"></div>"));
+        assertSuggestion(s, "css", "div > input[type=\"checkbox\"]", List.of("shadow=#box"));
         assertResolvesToTarget(s);
     }
 
